@@ -442,7 +442,7 @@ namespace Viperinius.Plugin.SpotifyImport.Utils
                         Enumerable.Empty<Guid>(),
                         Enumerable.Empty<Guid>(),
                         Enumerable.Empty<Guid>());
-                    
+
                     result.Add(mapping);
                     if (returnMbIdLists)
                     {
@@ -468,7 +468,7 @@ namespace Viperinius.Plugin.SpotifyImport.Utils
         {
             using var cmd = Connection.CreateCommand();
             var inClause = string.Join(",", isrcs.Select((_, idx) => $"$Isrc{idx}"));
-            
+
             var sql = $@"
                 SELECT Isrc, 'Rec' as Type, MusicBrainzRecordingId as Id1, NULL as Id2 FROM {TableIsrcMusicBrainzRecordingName} WHERE Isrc IN ({inClause})
                 UNION ALL

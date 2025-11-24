@@ -60,7 +60,7 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
             {
                 // library manager does not seem to support querying multiple ProviderIds with same key, so every different MB id has to be done in a separate query...
                 // to speed this up in some way, try to fill query with one of each "direct hit" ProviderId types if available
-                var tasks = new List<Task<IList<MediaBrowser.Controller.Entities.BaseItem>>>();
+                var tasks = new List<Task<IReadOnlyList<MediaBrowser.Controller.Entities.BaseItem>>>();
                 for (var ii = 0; ii < Math.Max(mbRecordings.Count, mbTracks.Count); ii++)
                 {
                     var idDict = new Dictionary<string, string>();
@@ -82,7 +82,7 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
                     })));
                 }
 
-                var results = await Task.WhenAll(tasks);
+                var results = await Task.WhenAll(tasks).ConfigureAwait(false);
                 foreach (var directHits in results)
                 {
                     if (directHits.Count > 0 && directHits[0] is Audio directHit)
@@ -97,7 +97,7 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
             var matchCandidates = new List<(int, ItemMatchLevel, Audio)>();
             if (mbReleases.Count > 0 || mbReleaseGroups.Count > 0)
             {
-                var tasks = new List<Task<IList<MediaBrowser.Controller.Entities.BaseItem>>>();
+                var tasks = new List<Task<IReadOnlyList<MediaBrowser.Controller.Entities.BaseItem>>>();
                 for (var ii = 0; ii < Math.Max(mbReleases.Count, mbReleaseGroups.Count); ii++)
                 {
                     var idDict = new Dictionary<string, string>();
@@ -118,7 +118,7 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
                     })));
                 }
 
-                var results = await Task.WhenAll(tasks);
+                var results = await Task.WhenAll(tasks).ConfigureAwait(false);
                 foreach (var tracksWithMbIds in results)
                 {
                     foreach (var track in tracksWithMbIds)

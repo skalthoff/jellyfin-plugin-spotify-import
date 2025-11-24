@@ -51,7 +51,7 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
 
             if (match != null)
             {
-                var item = _libraryManager.GetItemById<Audio>(match.JellyfinMatchId);
+                var item = _libraryManager.GetItemById<Audio>(match.MatchId);
                 return Task.FromResult(item);
             }
 

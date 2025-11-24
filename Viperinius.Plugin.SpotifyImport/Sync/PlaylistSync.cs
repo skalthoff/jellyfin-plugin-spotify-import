@@ -171,7 +171,7 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
                     continue;
                 }
 
-                if (!CheckPlaylistForTrack(playlist, user, providerPlaylistInfo.ProviderName, providerTrack))
+                if (!await CheckPlaylistForTrack(playlist, user, providerPlaylistInfo.ProviderName, providerTrack).ConfigureAwait(false))
                 {
                     var (track, failedCriterium) = await GetMatchingTrackAsync(providerPlaylistInfo.ProviderName, providerTrack).ConfigureAwait(false);
                     if (failedCriterium != ItemMatchCriteria.None && (Plugin.Instance?.Configuration.EnableVerboseLogging ?? false))
@@ -335,9 +335,9 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
             return null;
         }
 
-        private bool CheckPlaylistForTrack(Playlist playlist, User user, string providerId, ProviderTrackInfo providerTrackInfo)
+        private async Task<bool> CheckPlaylistForTrack(Playlist playlist, User user, string providerId, ProviderTrackInfo providerTrackInfo)
         {
-            var match = _cacheFinder.FindTrack(providerId, providerTrackInfo);
+            var match = await _cacheFinder.FindTrackAsync(providerId, providerTrackInfo).ConfigureAwait(false);
             foreach (var item in playlist.GetChildren(user, false, null))
             {
                 if (item is not Audio audioItem)
@@ -346,17 +346,6 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
                 }
 
                 if (match?.Id == audioItem.Id)
-                {
-                    return true;
-                }
-
-                var manualTrack = _manualMapStore.GetByTrackId(audioItem.Id);
-                if (manualTrack?.Provider.Equals(providerTrackInfo) ?? false)
-                {
-                    return true;
-                }
-
-                if (ItemMatchesTrackInfo(audioItem, providerTrackInfo, out _))
                 {
                     return true;
                 }
