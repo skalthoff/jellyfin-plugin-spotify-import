@@ -492,7 +492,10 @@ namespace Viperinius.Plugin.SpotifyImport.Utils
             while (reader.Read())
             {
                 var isrc = reader.GetString(0);
-                if (!mappingDict.TryGetValue(isrc, out var mapping)) continue;
+                if (!mappingDict.TryGetValue(isrc, out var mapping))
+                {
+                    continue;
+                }
 
                 var type = reader.GetString(1);
                 if (type == "Rec")
@@ -501,7 +504,10 @@ namespace Viperinius.Plugin.SpotifyImport.Utils
                     if (val != DBNull.Value)
                     {
                         var s = (string)val;
-                        if (Guid.TryParse(s, out var g)) mapping.MusicBrainzRecordingIds.Add(g);
+                        if (Guid.TryParse(s, out var g))
+                        {
+                            mapping.MusicBrainzRecordingIds.Add(g);
+                        }
                     }
                 }
                 else if (type == "Rel")
@@ -510,13 +516,20 @@ namespace Viperinius.Plugin.SpotifyImport.Utils
                     if (val1 != DBNull.Value)
                     {
                         var s = (string)val1;
-                        if (Guid.TryParse(s, out var g)) mapping.MusicBrainzReleaseIds.Add(g);
+                        if (Guid.TryParse(s, out var g))
+                        {
+                            mapping.MusicBrainzReleaseIds.Add(g);
+                        }
                     }
+
                     var val2 = reader.GetValue(3);
                     if (val2 != DBNull.Value)
                     {
                         var s = (string)val2;
-                        if (Guid.TryParse(s, out var g)) mapping.MusicBrainzTrackIds.Add(g);
+                        if (Guid.TryParse(s, out var g))
+                        {
+                            mapping.MusicBrainzTrackIds.Add(g);
+                        }
                     }
                 }
                 else if (type == "Grp")
@@ -525,7 +538,10 @@ namespace Viperinius.Plugin.SpotifyImport.Utils
                     if (val != DBNull.Value)
                     {
                         var s = (string)val;
-                        if (Guid.TryParse(s, out var g)) mapping.MusicBrainzReleaseGroupIds.Add(g);
+                        if (Guid.TryParse(s, out var g))
+                        {
+                            mapping.MusicBrainzReleaseGroupIds.Add(g);
+                        }
                     }
                 }
             }

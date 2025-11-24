@@ -43,7 +43,7 @@ namespace Viperinius.Plugin.SpotifyImport.Tests.Sync
         }
 
         [Fact]
-        public void FindTrackNoLibUsesMB()
+        public async Task FindTrackNoLibUsesMB()
         {
             TrackHelper.SetValidPluginInstance();
             Plugin.Instance!.Configuration.EnabledTrackMatchFindersRaw = (int)EnabledTrackMatchFinders.MusicBrainz;
@@ -68,12 +68,12 @@ namespace Viperinius.Plugin.SpotifyImport.Tests.Sync
 
             var finder = new MusicBrainzFinder(libManagerMock, db);
             Assert.False(finder.AnyLibraryUsesMusicBrainz);
-            var result = finder.FindTrack(correctProviderId, correctProviderTrackInfo);
+            var result = await finder.FindTrackAsync(correctProviderId, correctProviderTrackInfo);
             Assert.Null(result);
         }
 
         [Fact]
-        public void FindTrackNoExistingMatch()
+        public async Task FindTrackNoExistingMatch()
         {
             TrackHelper.SetValidPluginInstance();
             Plugin.Instance!.Configuration.EnabledTrackMatchFindersRaw = (int)EnabledTrackMatchFinders.MusicBrainz;
@@ -101,12 +101,12 @@ namespace Viperinius.Plugin.SpotifyImport.Tests.Sync
 
             var finder = new MusicBrainzFinder(libManagerMock, db);
             Assert.True(finder.AnyLibraryUsesMusicBrainz);
-            var result = finder.FindTrack(correctProviderId, correctProviderTrackInfo);
+            var result = await finder.FindTrackAsync(correctProviderId, correctProviderTrackInfo);
             Assert.Null(result);
         }
 
         [Fact]
-        public void FindTrackNoExistingNonPlaceholderMatch()
+        public async Task FindTrackNoExistingNonPlaceholderMatch()
         {
             TrackHelper.SetValidPluginInstance();
             Plugin.Instance!.Configuration.EnabledTrackMatchFindersRaw = (int)EnabledTrackMatchFinders.MusicBrainz;
@@ -134,12 +134,12 @@ namespace Viperinius.Plugin.SpotifyImport.Tests.Sync
 
             var finder = new MusicBrainzFinder(libManagerMock, db);
             Assert.True(finder.AnyLibraryUsesMusicBrainz);
-            var result = finder.FindTrack(correctProviderId, correctProviderTrackInfo);
+            var result = await finder.FindTrackAsync(correctProviderId, correctProviderTrackInfo);
             Assert.Null(result);
         }
 
         [Fact]
-        public void FindTrackNoTrackNameMatch()
+        public async Task FindTrackNoTrackNameMatch()
         {
             TrackHelper.SetValidPluginInstance();
             Plugin.Instance!.Configuration.EnabledTrackMatchFindersRaw = (int)EnabledTrackMatchFinders.MusicBrainz;
@@ -184,12 +184,12 @@ namespace Viperinius.Plugin.SpotifyImport.Tests.Sync
                     return [];
                 });
 
-            var result = finder.FindTrack(correctProviderId, correctProviderTrackInfo);
+            var result = await finder.FindTrackAsync(correctProviderId, correctProviderTrackInfo);
             Assert.Null(result);
         }
 
         [Fact]
-        public void FindTrackOkDirectHitRecording()
+        public async Task FindTrackOkDirectHitRecording()
         {
             TrackHelper.SetValidPluginInstance();
             Plugin.Instance!.Configuration.EnabledTrackMatchFindersRaw = (int)EnabledTrackMatchFinders.MusicBrainz;
@@ -234,14 +234,14 @@ namespace Viperinius.Plugin.SpotifyImport.Tests.Sync
                     return [];
                 });
 
-            var result = finder.FindTrack(correctProviderId, correctProviderTrackInfo);
+            var result = await finder.FindTrackAsync(correctProviderId, correctProviderTrackInfo);
             Assert.NotNull(result);
             Assert.True(result.ProviderIds.ContainsKey("MusicBrainzRecording"));
             Assert.Equal(correctMbRecordingId.ToString(), result.ProviderIds["MusicBrainzRecording"]);
         }
 
         [Fact]
-        public void FindTrackOkDirectHitTrack()
+        public async Task FindTrackOkDirectHitTrack()
         {
             TrackHelper.SetValidPluginInstance();
             Plugin.Instance!.Configuration.EnabledTrackMatchFindersRaw = (int)EnabledTrackMatchFinders.MusicBrainz;
@@ -286,14 +286,14 @@ namespace Viperinius.Plugin.SpotifyImport.Tests.Sync
                     return [];
                 });
 
-            var result = finder.FindTrack(correctProviderId, correctProviderTrackInfo);
+            var result = await finder.FindTrackAsync(correctProviderId, correctProviderTrackInfo);
             Assert.NotNull(result);
             Assert.True(result.ProviderIds.ContainsKey("MusicBrainzTrack"));
             Assert.Equal(correctMbTrackId.ToString(), result.ProviderIds["MusicBrainzTrack"]);
         }
 
         [Fact]
-        public void FindTrackOkTrackNameMatch()
+        public async Task FindTrackOkTrackNameMatch()
         {
             TrackHelper.SetValidPluginInstance();
             Plugin.Instance!.Configuration.EnabledTrackMatchFindersRaw = (int)EnabledTrackMatchFinders.MusicBrainz;
@@ -338,7 +338,7 @@ namespace Viperinius.Plugin.SpotifyImport.Tests.Sync
                     return [];
                 });
 
-            var result = finder.FindTrack(correctProviderId, correctProviderTrackInfo);
+            var result = await finder.FindTrackAsync(correctProviderId, correctProviderTrackInfo);
             Assert.NotNull(result);
             Assert.True(result.ProviderIds.ContainsKey("MusicBrainzAlbum"));
             Assert.True(result.ProviderIds.ContainsKey("MusicBrainzReleaseGroup"));

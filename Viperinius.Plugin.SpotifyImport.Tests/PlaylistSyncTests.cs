@@ -30,9 +30,9 @@ namespace Viperinius.Plugin.SpotifyImport.Tests
         {
         }
 
-        public Audio? WrapGetMatchingTrack(string providerId, ProviderTrackInfo trackInfo, out ItemMatchCriteria failedCriterium)
+        public async Task<(Audio? Track, ItemMatchCriteria FailedCriteria)> WrapGetMatchingTrackAsync(string providerId, ProviderTrackInfo trackInfo)
         {
-            return GetMatchingTrack(providerId, trackInfo, out failedCriterium);
+            return await GetMatchingTrackAsync(providerId, trackInfo);
         }
 
         public bool WrapSaveMatchInCache(string providerId, ProviderTrackInfo providerTrackInfo, Guid jellyfinTrackId)
@@ -108,11 +108,15 @@ namespace Viperinius.Plugin.SpotifyImport.Tests
             ItemMatchCriteria failedCrit;
             if (shouldMatch)
             {
-                Assert.True(wrapper.WrapGetMatchingTrack(string.Empty, prov, out failedCrit) == audio, $"{TrackHelper.GetErrorString(audio)}\n{AlbumHelper.GetErrorString(album)}\n{ArtistHelper.GetErrorString(artist)}");
+                var (match, crit) = await wrapper.WrapGetMatchingTrackAsync(string.Empty, prov);
+                failedCrit = crit;
+                Assert.True(match == audio, $"{TrackHelper.GetErrorString(audio)}\n{AlbumHelper.GetErrorString(album)}\n{ArtistHelper.GetErrorString(artist)}");
             }
             else
             {
-                Assert.True(wrapper.WrapGetMatchingTrack(string.Empty, prov, out failedCrit) == null, $"{TrackHelper.GetErrorString(audio)}\n{AlbumHelper.GetErrorString(album)}\n{ArtistHelper.GetErrorString(artist)}");
+                var (match, crit) = await wrapper.WrapGetMatchingTrackAsync(string.Empty, prov);
+                failedCrit = crit;
+                Assert.True(match == null, $"{TrackHelper.GetErrorString(audio)}\n{AlbumHelper.GetErrorString(album)}\n{ArtistHelper.GetErrorString(artist)}");
             }
 
             if (expectedFailedCriteria != null)
@@ -510,7 +514,7 @@ namespace Viperinius.Plugin.SpotifyImport.Tests
             using var db = new DbRepository(":memory:");
             db.InitDb();
             SetUpLibManagerMock(libManagerMock, jfArtist);
-            var wrapper = new PlaylistSyncWrapper(
+            wrapper = new PlaylistSyncWrapper(
                 loggerMock,
                 plManagerMock,
                 libManagerMock,
@@ -520,7 +524,7 @@ namespace Viperinius.Plugin.SpotifyImport.Tests
                 new ManualMapStore(Substitute.For<ILogger<ManualMapStore>>()),
                 db);
 
-            var result = wrapper.WrapGetMatchingTrack(string.Empty, prov, out var failedCrit);
+            var (result, failedCrit) = await wrapper.WrapGetMatchingTrackAsync(string.Empty, prov);
             Assert.NotNull(result);
             Assert.Equal(result.Name, jfTrackCorrect.Name);
             Assert.Contains("Acoustic", result.Name);
@@ -539,14 +543,14 @@ namespace Viperinius.Plugin.SpotifyImport.Tests
                 new ManualMapStore(Substitute.For<ILogger<ManualMapStore>>()),
                 db);
 
-            result = wrapper.WrapGetMatchingTrack(string.Empty, prov, out failedCrit);
+            (result, failedCrit) = await wrapper.WrapGetMatchingTrackAsync(string.Empty, prov);
             Assert.Equal(result, jfTrackCorrect);
             Assert.Contains("Acoustic", result!.Name);
             Assert.Contains("Richards", result!.Name);
             Assert.True(failedCrit == ItemMatchCriteria.None);
 
             Plugin.Instance!.Configuration.ItemMatchLevel = ItemMatchLevel.Fuzzy;
-            result = wrapper.WrapGetMatchingTrack(string.Empty, prov, out failedCrit);
+            (result, failedCrit) = await wrapper.WrapGetMatchingTrackAsync(string.Empty, prov);
             Assert.Equal(result, jfTrackCorrect);
             Assert.Contains("Acoustic", result!.Name);
             Assert.Contains("Richards", result!.Name);
@@ -593,7 +597,7 @@ namespace Viperinius.Plugin.SpotifyImport.Tests
                 new ManualMapStore(Substitute.For<ILogger<ManualMapStore>>()),
                 db);
 
-            var result = wrapper.WrapGetMatchingTrack(string.Empty, prov, out var failedCrit);
+            var (result, failedCrit) = await wrapper.WrapGetMatchingTrackAsync(string.Empty, prov);
             Assert.NotNull(result);
             Assert.Equal(result.Name, jfTrackCorrect.Name);
             Assert.Equal(result.Id, jfTrackCorrect.Id);
@@ -650,14 +654,14 @@ namespace Viperinius.Plugin.SpotifyImport.Tests
                 .GetItemById<Audio>(Arg.Any<Guid>())
                 .Returns(info => new Audio { Id = info.ArgAt<Guid>(0) });
             var finder = new CacheFinder(libManagerMock, db);
-            var foundMatch = finder.FindTrack(correctProviderId, correctProviderTrackInfo);
+            var foundMatch = await finder.FindTrackAsync(correctProviderId, correctProviderTrackInfo);
             Assert.NotNull(foundMatch);
             Assert.Equal(jfTrackCorrectId, foundMatch.Id);
 
-            foundMatch = finder.FindTrack(string.Empty, correctProviderTrackInfo);
+            foundMatch = await finder.FindTrackAsync(string.Empty, correctProviderTrackInfo);
             Assert.Null(foundMatch);
 
-            foundMatch = finder.FindTrack(correctProviderId, new ProviderTrackInfo());
+            foundMatch = await finder.FindTrackAsync(correctProviderId, new ProviderTrackInfo());
             Assert.Null(foundMatch);
         }
     }

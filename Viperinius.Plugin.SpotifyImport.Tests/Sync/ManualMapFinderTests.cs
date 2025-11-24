@@ -47,7 +47,7 @@ namespace Viperinius.Plugin.SpotifyImport.Tests.Sync
         }
 
         [Fact]
-        public void FindTrackOk()
+        public async Task FindTrackOk()
         {
             TrackHelper.SetValidPluginInstance();
 
@@ -100,13 +100,13 @@ namespace Viperinius.Plugin.SpotifyImport.Tests.Sync
             Assert.True(manualMapStore.Load());
 
             var finder = new ManualMapFinder(libManagerMock, manualMapStore);
-            var result = finder.FindTrack(correctProviderId, correctProviderTrackInfo);
+            var result = await finder.FindTrackAsync(correctProviderId, correctProviderTrackInfo);
             Assert.NotNull(result);
             Assert.Equal(correctJfId, result.Id);
         }
 
         [Fact]
-        public void FindTrackOkById()
+        public async Task FindTrackOkById()
         {
             TrackHelper.SetValidPluginInstance();
 
@@ -161,13 +161,13 @@ namespace Viperinius.Plugin.SpotifyImport.Tests.Sync
             Assert.True(manualMapStore.Load());
 
             var finder = new ManualMapFinder(libManagerMock, manualMapStore);
-            var result = finder.FindTrack(correctProviderId, correctProviderTrackInfo);
+            var result = await finder.FindTrackAsync(correctProviderId, correctProviderTrackInfo);
             Assert.NotNull(result);
             Assert.Equal(correctJfId, result.Id);
         }
 
         [Fact]
-        public void FindTrackNoExistingMatch()
+        public async Task FindTrackNoExistingMatch()
         {
             TrackHelper.SetValidPluginInstance();
 
@@ -212,7 +212,7 @@ namespace Viperinius.Plugin.SpotifyImport.Tests.Sync
             Assert.True(manualMapStore.Load());
 
             var finder = new ManualMapFinder(libManagerMock, manualMapStore);
-            var result = finder.FindTrack(correctProviderId, correctProviderTrackInfo);
+            var result = await finder.FindTrackAsync(correctProviderId, correctProviderTrackInfo);
             Assert.Null(result);
         }
     }
