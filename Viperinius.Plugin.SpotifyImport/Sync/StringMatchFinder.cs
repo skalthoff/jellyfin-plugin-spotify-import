@@ -28,7 +28,12 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
 
         public bool IsEnabled => true;
 
-        public Audio? FindTrack(string providerId, ProviderTrackInfo providerTrackInfo)
+        public Task<Audio?> FindTrackAsync(string providerId, ProviderTrackInfo providerTrackInfo)
+        {
+            return Task.FromResult(FindTrackSync(providerId, providerTrackInfo));
+        }
+
+        private Audio? FindTrackSync(string providerId, ProviderTrackInfo providerTrackInfo)
         {
             if (!IsEnabled)
             {

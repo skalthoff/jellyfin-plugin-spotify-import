@@ -173,7 +173,7 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
 
                 if (!CheckPlaylistForTrack(playlist, user, providerPlaylistInfo.ProviderName, providerTrack))
                 {
-                    var track = GetMatchingTrack(providerPlaylistInfo.ProviderName, providerTrack, out var failedCriterium);
+                    var (track, failedCriterium) = await GetMatchingTrackAsync(providerPlaylistInfo.ProviderName, providerTrack).ConfigureAwait(false);
                     if (failedCriterium != ItemMatchCriteria.None && (Plugin.Instance?.Configuration.EnableVerboseLogging ?? false))
                     {
                         _logger.LogInformation(
@@ -214,9 +214,9 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
             }
         }
 
-        protected Audio? GetMatchingTrack(string providerId, ProviderTrackInfo providerTrackInfo, out ItemMatchCriteria failedMatchCriterium)
+        protected async Task<(Audio? Track, ItemMatchCriteria FailedCriteria)> GetMatchingTrackAsync(string providerId, ProviderTrackInfo providerTrackInfo)
         {
-            failedMatchCriterium = ItemMatchCriteria.None;
+            var failedMatchCriterium = ItemMatchCriteria.None;
             if (Plugin.Instance?.Configuration.EnableVerboseLogging ?? false)
             {
                 _logger.LogInformation(
@@ -229,7 +229,7 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
             }
 
             // 1. check cache
-            var match = _cacheFinder.FindTrack(providerId, providerTrackInfo);
+            var match = await _cacheFinder.FindTrackAsync(providerId, providerTrackInfo).ConfigureAwait(false);
             if (match != null)
             {
                 if (Plugin.Instance?.Configuration.EnableVerboseLogging ?? false)
@@ -237,11 +237,11 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
                     _logger.LogInformation("Found cached match for track with id {Id}", match.Id);
                 }
 
-                return match;
+                return (match, failedMatchCriterium);
             }
 
             // 2. check manual mappings
-            match = _manualMapFinder.FindTrack(providerId, providerTrackInfo);
+            match = await _manualMapFinder.FindTrackAsync(providerId, providerTrackInfo).ConfigureAwait(false);
             if (match != null)
             {
                 if (Plugin.Instance?.Configuration.EnableVerboseLogging ?? false)
@@ -250,11 +250,11 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
                 }
 
                 SaveMatchInCache(providerId, providerTrackInfo, match.Id);
-                return match;
+                return (match, failedMatchCriterium);
             }
 
             // 3. check by isrc
-            match = _musicBrainzFinder.FindTrack(providerId, providerTrackInfo);
+            match = await _musicBrainzFinder.FindTrackAsync(providerId, providerTrackInfo).ConfigureAwait(false);
             if (match != null)
             {
                 if (Plugin.Instance?.Configuration.EnableVerboseLogging ?? false)
@@ -263,7 +263,7 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
                 }
 
                 SaveMatchInCache(providerId, providerTrackInfo, match.Id);
-                return match;
+                return (match, failedMatchCriterium);
             }
 
             // 4.1 check using legacy string comparisons
@@ -275,11 +275,11 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
                     SaveMatchInCache(providerId, providerTrackInfo, legacyMatch.Id);
                 }
 
-                return legacyMatch;
+                return (legacyMatch, failedMatchCriterium);
             }
 
             // 4.2 check using string comparisons
-            match = _stringMatchFinder.FindTrack(providerId, providerTrackInfo);
+            match = await _stringMatchFinder.FindTrackAsync(providerId, providerTrackInfo).ConfigureAwait(false);
             failedMatchCriterium = _stringMatchFinder.LastFailedCriteria;
             if (match != null)
             {
@@ -289,10 +289,10 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
                 }
 
                 SaveMatchInCache(providerId, providerTrackInfo, match.Id);
-                return match;
+                return (match, failedMatchCriterium);
             }
 
-            return match;
+            return (match, failedMatchCriterium);
         }
 
         private Audio? GetMatchingTrackLegacy(ProviderTrackInfo providerTrackInfo, out ItemMatchCriteria failedMatchCriterium)

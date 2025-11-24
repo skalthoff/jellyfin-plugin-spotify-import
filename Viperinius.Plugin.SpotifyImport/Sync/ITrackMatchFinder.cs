@@ -11,6 +11,6 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
     {
         bool IsEnabled { get; }
 
-        Audio? FindTrack(string providerId, ProviderTrackInfo providerTrackInfo);
+        Task<Audio?> FindTrackAsync(string providerId, ProviderTrackInfo providerTrackInfo);
     }
 }

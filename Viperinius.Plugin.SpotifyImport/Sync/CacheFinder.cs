@@ -25,17 +25,17 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
 
         public bool IsEnabled => true;
 
-        public Audio? FindTrack(string providerId, ProviderTrackInfo providerTrackInfo)
+        public Task<Audio?> FindTrackAsync(string providerId, ProviderTrackInfo providerTrackInfo)
         {
             if (!IsEnabled || Plugin.Instance == null)
             {
-                return null;
+                return Task.FromResult<Audio?>(null);
             }
 
             var trackId = _dbRepository.GetProviderTrackDbId(providerId, providerTrackInfo.Id);
             if (trackId == null)
             {
-                return null;
+                return Task.FromResult<Audio?>(null);
             }
 
             var matches = _dbRepository.GetProviderTrackMatch((long)trackId);
@@ -49,12 +49,13 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
                 },
                 null);
 
-            if (match == null)
+            if (match != null)
             {
-                return null;
+                var item = _libraryManager.GetItemById<Audio>(match.JellyfinMatchId);
+                return Task.FromResult(item);
             }
 
-            return _libraryManager.GetItemById<Audio>(match.MatchId);
+            return Task.FromResult<Audio?>(null);
         }
     }
 }

@@ -23,21 +23,21 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
 
         public bool IsEnabled => true;
 
-        public Audio? FindTrack(string providerId, ProviderTrackInfo providerTrackInfo)
+        public Task<Audio?> FindTrackAsync(string providerId, ProviderTrackInfo providerTrackInfo)
         {
             if (!IsEnabled)
             {
-                return null;
+                return Task.FromResult<Audio?>(null);
             }
 
             var manualTrack = _manualMapStore.GetByProviderTrackInfo(providerTrackInfo);
             if (manualTrack?.Provider.Equals(providerTrackInfo) ?? false)
             {
                 var jellyfinId = Guid.Parse(manualTrack.Jellyfin.Track);
-                return _libraryManager.GetItemById<Audio>(jellyfinId);
+                return Task.FromResult(_libraryManager.GetItemById<Audio>(jellyfinId));
             }
 
-            return null;
+            return Task.FromResult<Audio?>(null);
         }
     }
 }

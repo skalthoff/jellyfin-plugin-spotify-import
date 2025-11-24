@@ -35,7 +35,7 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
 
         public bool IsEnabled => Plugin.Instance?.Configuration.EnabledTrackMatchFinders.HasFlag(EnabledTrackMatchFinders.MusicBrainz) ?? false;
 
-        public Audio? FindTrack(string providerId, ProviderTrackInfo providerTrackInfo)
+        public async Task<Audio?> FindTrackAsync(string providerId, ProviderTrackInfo providerTrackInfo)
         {
             if (!IsEnabled || !AnyLibraryUsesMusicBrainz || string.IsNullOrWhiteSpace(providerTrackInfo.IsrcId))
             {
@@ -59,6 +59,7 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
             {
                 // library manager does not seem to support querying multiple ProviderIds with same key, so every different MB id has to be done in a separate query...
                 // to speed this up in some way, try to fill query with one of each "direct hit" ProviderId types if available
+                var tasks = new List<Task<IList<MediaBrowser.Controller.Entities.BaseItem>>>();
                 for (var ii = 0; ii < Math.Max(mbRecordings.Count, mbTracks.Count); ii++)
                 {
                     var idDict = new Dictionary<string, string>();
@@ -72,13 +73,17 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
                         idDict.Add("MusicBrainzTrack", mbTracks.ElementAt(ii));
                     }
 
-                    var directHits = _libraryManager.GetItemList(new MediaBrowser.Controller.Entities.InternalItemsQuery
+                    tasks.Add(Task.Run(() => _libraryManager.GetItemList(new MediaBrowser.Controller.Entities.InternalItemsQuery
                     {
                         HasAnyProviderId = idDict,
                         IncludeItemTypes = new[] { BaseItemKind.Audio },
                         Limit = 1,
-                    });
+                    })));
+                }
 
+                var results = await Task.WhenAll(tasks);
+                foreach (var directHits in results)
+                {
                     if (directHits.Count > 0 && directHits[0] is Audio directHit)
                     {
                         return directHit;
@@ -89,30 +94,39 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
             // library manager does not seem to support querying multiple ProviderIds with same key, so every different MB id has to be done in a separate query...
             // to speed this up in some way, try to fill query with one of each ProviderId types if available
             var matchCandidates = new List<(int, ItemMatchLevel, Audio)>();
-            for (var ii = 0; ii < Math.Max(mbReleases.Count, mbReleaseGroups.Count); ii++)
+            if (mbReleases.Count > 0 || mbReleaseGroups.Count > 0)
             {
-                var idDict = new Dictionary<string, string>();
-                if (ii < mbReleases.Count)
+                var tasks = new List<Task<IList<MediaBrowser.Controller.Entities.BaseItem>>>();
+                for (var ii = 0; ii < Math.Max(mbReleases.Count, mbReleaseGroups.Count); ii++)
                 {
-                    idDict.Add("MusicBrainzAlbum", mbReleases.ElementAt(ii));
-                }
-
-                if (ii < mbReleaseGroups.Count)
-                {
-                    idDict.Add("MusicBrainzReleaseGroup", mbReleaseGroups.ElementAt(ii));
-                }
-
-                var tracksWithMbIds = _libraryManager.GetItemList(new MediaBrowser.Controller.Entities.InternalItemsQuery
-                {
-                    HasAnyProviderId = idDict,
-                    IncludeItemTypes = new[] { BaseItemKind.Audio },
-                });
-                foreach (var track in tracksWithMbIds)
-                {
-                    var matchInfo = MatchTrack((track as Audio)!, providerTrackInfo);
-                    if (matchInfo != null)
+                    var idDict = new Dictionary<string, string>();
+                    if (ii < mbReleases.Count)
                     {
-                        matchCandidates.Add(((int, ItemMatchLevel, Audio))matchInfo);
+                        idDict.Add("MusicBrainzAlbum", mbReleases.ElementAt(ii));
+                    }
+
+                    if (ii < mbReleaseGroups.Count)
+                    {
+                        idDict.Add("MusicBrainzReleaseGroup", mbReleaseGroups.ElementAt(ii));
+                    }
+
+                    tasks.Add(Task.Run(() => _libraryManager.GetItemList(new MediaBrowser.Controller.Entities.InternalItemsQuery
+                    {
+                        HasAnyProviderId = idDict,
+                        IncludeItemTypes = new[] { BaseItemKind.Audio },
+                    })));
+                }
+
+                var results = await Task.WhenAll(tasks);
+                foreach (var tracksWithMbIds in results)
+                {
+                    foreach (var track in tracksWithMbIds)
+                    {
+                        var matchInfo = MatchTrack((track as Audio)!, providerTrackInfo);
+                        if (matchInfo != null)
+                        {
+                            matchCandidates.Add(((int, ItemMatchLevel, Audio))matchInfo);
+                        }
                     }
                 }
             }
