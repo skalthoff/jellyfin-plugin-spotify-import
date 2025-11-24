@@ -96,7 +96,7 @@ namespace Viperinius.Plugin.SpotifyImport.Tests.Sync
                 }
                 """;
 
-            File.WriteAllText(manualMapStore.FilePath, json);
+            await File.WriteAllTextAsync(manualMapStore.FilePath, json);
             Assert.True(manualMapStore.Load());
 
             var finder = new ManualMapFinder(libManagerMock, manualMapStore);
@@ -157,7 +157,7 @@ namespace Viperinius.Plugin.SpotifyImport.Tests.Sync
                 }
                 """;
 
-            File.WriteAllText(manualMapStore.FilePath, json);
+            await File.WriteAllTextAsync(manualMapStore.FilePath, json);
             Assert.True(manualMapStore.Load());
 
             var finder = new ManualMapFinder(libManagerMock, manualMapStore);
@@ -208,7 +208,7 @@ namespace Viperinius.Plugin.SpotifyImport.Tests.Sync
                 }
                 """;
 
-            File.WriteAllText(manualMapStore.FilePath, json);
+            await File.WriteAllTextAsync(manualMapStore.FilePath, json);
             Assert.True(manualMapStore.Load());
 
             var finder = new ManualMapFinder(libManagerMock, manualMapStore);

@@ -24,7 +24,7 @@ namespace Viperinius.Plugin.SpotifyImport.Tests.Sync
         }
 
         [Fact]
-        public void FindTrackOk()
+        public async Task FindTrackOk()
         {
             TrackHelper.SetValidPluginInstance();
 
@@ -57,13 +57,13 @@ namespace Viperinius.Plugin.SpotifyImport.Tests.Sync
             db.InsertProviderTrackMatch((long)otherTrackId!, Guid.NewGuid().ToString(), SpotifyImport.Matchers.ItemMatchLevel.Fuzzy, SpotifyImport.Matchers.ItemMatchCriteria.TrackName);
 
             var finder = new CacheFinder(libManagerMock, db);
-            var result = finder.FindTrack(correctProviderId, correctProviderTrackInfo);
+            var result = await finder.FindTrackAsync(correctProviderId, correctProviderTrackInfo);
             Assert.NotNull(result);
             Assert.Equal(correctJfId, result.Id);
         }
 
         [Fact]
-        public void FindTrackPluginNotSet()
+        public async Task FindTrackPluginNotSet()
         {
             var correctProviderId = "asdiue8va";
             var correctProviderTrackInfo = new ProviderTrackInfo
@@ -85,12 +85,12 @@ namespace Viperinius.Plugin.SpotifyImport.Tests.Sync
             db.InitDb();
 
             var finder = new CacheFinder(libManagerMock, db);
-            var result = finder.FindTrack(correctProviderId, correctProviderTrackInfo);
+            var result = await finder.FindTrackAsync(correctProviderId, correctProviderTrackInfo);
             Assert.Null(result);
         }
 
         [Fact]
-        public void FindTrackNoExistingMatch()
+        public async Task FindTrackNoExistingMatch()
         {
             TrackHelper.SetValidPluginInstance();
 
@@ -121,7 +121,7 @@ namespace Viperinius.Plugin.SpotifyImport.Tests.Sync
             db.InsertProviderTrackMatch((long)otherTrackId!, Guid.NewGuid().ToString(), SpotifyImport.Matchers.ItemMatchLevel.Fuzzy, SpotifyImport.Matchers.ItemMatchCriteria.TrackName);
 
             var finder = new CacheFinder(libManagerMock, db);
-            var result = finder.FindTrack(correctProviderId, correctProviderTrackInfo);
+            var result = await finder.FindTrackAsync(correctProviderId, correctProviderTrackInfo);
             Assert.Null(result);
         }
     }

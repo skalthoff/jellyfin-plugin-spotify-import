@@ -80,7 +80,7 @@ namespace Viperinius.Plugin.SpotifyImport.Tests
             return $"ItemMatchCriteria -> Actual: {actual}; Expected: {expected}";
         }
 
-        private void CheckItem(
+        private async Task CheckItem(
             bool shouldMatch,
             ProviderTrackInfo prov,
             Audio audio,
@@ -137,7 +137,7 @@ namespace Viperinius.Plugin.SpotifyImport.Tests
         }
 
         [Fact]
-        public void TrackMatching_Respects_Level_Default()
+        public async Task TrackMatching_Respects_Level_Default()
         {
             TrackHelper.SetValidPluginInstance();
 
@@ -158,12 +158,12 @@ namespace Viperinius.Plugin.SpotifyImport.Tests
 
             foreach (var (isMatch, item) in jfItems)
             {
-                CheckItem(isMatch, prov, item.Track, item.Album, item.Artist);
+                await CheckItem(isMatch, prov, item.Track, item.Album, item.Artist);
             }
         }
         
         [Fact]
-        public void TrackMatching_Respects_Level_IgnoreCase()
+        public async Task TrackMatching_Respects_Level_IgnoreCase()
         {
             TrackHelper.SetValidPluginInstance();
 
@@ -183,12 +183,12 @@ namespace Viperinius.Plugin.SpotifyImport.Tests
 
             foreach (var (isMatch, item) in jfItems)
             {
-                CheckItem(isMatch, prov, item.Track, item.Album, item.Artist);
+                await CheckItem(isMatch, prov, item.Track, item.Album, item.Artist);
             }
         }
 
         [Fact]
-        public void TrackMatching_Respects_Level_IgnoreCasePunctuation()
+        public async Task TrackMatching_Respects_Level_IgnoreCasePunctuation()
         {
             TrackHelper.SetValidPluginInstance();
 
@@ -208,12 +208,12 @@ namespace Viperinius.Plugin.SpotifyImport.Tests
 
             foreach (var (isMatch, item) in jfItems)
             {
-                CheckItem(isMatch, prov, item.Track, item.Album, item.Artist);
+                await CheckItem(isMatch, prov, item.Track, item.Album, item.Artist);
             }
         }
 
         [Fact]
-        public void TrackMatching_Respects_Level_IgnoreCasePunctuationParens()
+        public async Task TrackMatching_Respects_Level_IgnoreCasePunctuationParens()
         {
             TrackHelper.SetValidPluginInstance();
 
@@ -233,12 +233,12 @@ namespace Viperinius.Plugin.SpotifyImport.Tests
 
             foreach (var (isMatch, item) in jfItems)
             {
-                CheckItem(isMatch, prov, item.Track, item.Album, item.Artist);
+                await CheckItem(isMatch, prov, item.Track, item.Album, item.Artist);
             }
         }
 
         [Fact]
-        public void TrackMatching_Respects_Level_Fuzzy()
+        public async Task TrackMatching_Respects_Level_Fuzzy()
         {
             TrackHelper.SetValidPluginInstance();
 
@@ -259,12 +259,12 @@ namespace Viperinius.Plugin.SpotifyImport.Tests
 
             foreach (var (isMatch, item) in jfItems)
             {
-                CheckItem(isMatch, prov, item.Track, item.Album, item.Artist);
+                await CheckItem(isMatch, prov, item.Track, item.Album, item.Artist);
             }
         }
 
         [Fact]
-        public void TrackMatching_Respects_Criteria_TrackName()
+        public async Task TrackMatching_Respects_Criteria_TrackName()
         {
             TrackHelper.SetValidPluginInstance();
             Plugin.Instance!.Configuration.ItemMatchLevel = ItemMatchLevel.Default;
@@ -279,7 +279,7 @@ namespace Viperinius.Plugin.SpotifyImport.Tests
 
             foreach (var (isMatch, item) in jfItems)
             {
-                CheckItem(isMatch, prov, item.Track, item.Album, item.Artist, ItemMatchCriteria.TrackName);
+                await CheckItem(isMatch, prov, item.Track, item.Album, item.Artist, ItemMatchCriteria.TrackName);
             }
 
             Plugin.Instance!.Configuration.ItemMatchCriteriaRaw = (int)ItemMatchCriteria.Artists;
@@ -291,12 +291,12 @@ namespace Viperinius.Plugin.SpotifyImport.Tests
 
             foreach (var (isMatch, item) in jfItems)
             {
-                CheckItem(isMatch, prov, item.Track, item.Album, item.Artist, ItemMatchCriteria.TrackName);
+                await CheckItem(isMatch, prov, item.Track, item.Album, item.Artist, ItemMatchCriteria.TrackName);
             }
         }
 
         [Fact]
-        public void TrackMatching_Respects_Criteria_Album()
+        public async Task TrackMatching_Respects_Criteria_Album()
         {
             TrackHelper.SetValidPluginInstance();
             Plugin.Instance!.Configuration.ItemMatchLevel = ItemMatchLevel.Default;
@@ -311,7 +311,7 @@ namespace Viperinius.Plugin.SpotifyImport.Tests
 
             foreach (var (isMatch, item) in jfItems)
             {
-                CheckItem(isMatch, prov, item.Track, item.Album, item.Artist, ItemMatchCriteria.AlbumName);
+                await CheckItem(isMatch, prov, item.Track, item.Album, item.Artist, ItemMatchCriteria.AlbumName);
             }
 
             Plugin.Instance!.Configuration.ItemMatchCriteriaRaw = (int)ItemMatchCriteria.Artists;
@@ -323,12 +323,12 @@ namespace Viperinius.Plugin.SpotifyImport.Tests
 
             foreach (var (isMatch, item) in jfItems)
             {
-                CheckItem(isMatch, prov, item.Track, item.Album, item.Artist, ItemMatchCriteria.AlbumName);
+                await CheckItem(isMatch, prov, item.Track, item.Album, item.Artist, ItemMatchCriteria.AlbumName);
             }
         }
 
         [Fact]
-        public void TrackMatching_Respects_Criteria_Artist()
+        public async Task TrackMatching_Respects_Criteria_Artist()
         {
             TrackHelper.SetValidPluginInstance();
             Plugin.Instance!.Configuration.ItemMatchLevel = ItemMatchLevel.Default;
@@ -344,7 +344,7 @@ namespace Viperinius.Plugin.SpotifyImport.Tests
 
             foreach (var (isMatch, item) in jfItems)
             {
-                CheckItem(isMatch, prov, item.Track, item.Album, item.Artist, ItemMatchCriteria.Artists);
+                await CheckItem(isMatch, prov, item.Track, item.Album, item.Artist, ItemMatchCriteria.Artists);
             }
 
             Plugin.Instance!.Configuration.ItemMatchCriteriaRaw = (int)ItemMatchCriteria.AlbumName;
@@ -357,12 +357,12 @@ namespace Viperinius.Plugin.SpotifyImport.Tests
 
             foreach (var (isMatch, item) in jfItems)
             {
-                CheckItem(isMatch, prov, item.Track, item.Album, item.Artist, ItemMatchCriteria.Artists);
+                await CheckItem(isMatch, prov, item.Track, item.Album, item.Artist, ItemMatchCriteria.Artists);
             }
         }
 
         [Fact]
-        public void TrackMatching_Respects_Criteria_AlbumArtist()
+        public async Task TrackMatching_Respects_Criteria_AlbumArtist()
         {
             TrackHelper.SetValidPluginInstance();
             Plugin.Instance!.Configuration.ItemMatchLevel = ItemMatchLevel.Default;
@@ -378,7 +378,7 @@ namespace Viperinius.Plugin.SpotifyImport.Tests
 
             foreach (var (isMatch, item) in jfItems)
             {
-                CheckItem(isMatch, prov, item.Track, item.Album, item.Artist, ItemMatchCriteria.AlbumArtists);
+                await CheckItem(isMatch, prov, item.Track, item.Album, item.Artist, ItemMatchCriteria.AlbumArtists);
             }
 
             Plugin.Instance!.Configuration.ItemMatchCriteriaRaw = (int)ItemMatchCriteria.Artists;
@@ -391,13 +391,13 @@ namespace Viperinius.Plugin.SpotifyImport.Tests
 
             foreach (var (isMatch, item) in jfItems)
             {
-                CheckItem(isMatch, prov, item.Track, item.Album, item.Artist, ItemMatchCriteria.AlbumArtists);
+                await CheckItem(isMatch, prov, item.Track, item.Album, item.Artist, ItemMatchCriteria.AlbumArtists);
             }
         }
 
         [Theory]
         [ClassData(typeof(FindTrackMatchDataRegression))]
-        public void FindTrackMatch_Regression(
+        public async Task FindTrackMatch_Regression(
             bool shouldMatch,
             string? jfTrack,
             string? jfAlbum,
@@ -416,7 +416,7 @@ namespace Viperinius.Plugin.SpotifyImport.Tests
 
             var prov = TrackHelper.CreateProviderItem(provTrack ?? "", provAlbum ?? "", provAlbumArtists, provArtists);
             var jf = TrackHelper.CreateAllJfItems(jfTrack, jfAlbum, jfAlbumArtist, jfArtist);
-            CheckItem(shouldMatch, prov, jf.Item1, jf.Item2, jf.Item3, null);
+            await CheckItem(shouldMatch, prov, jf.Item1, jf.Item2, jf.Item3, null);
         }
 
         class FindTrackMatchDataRegression : IEnumerable<object[]>
@@ -488,7 +488,7 @@ namespace Viperinius.Plugin.SpotifyImport.Tests
         }
 
         [Fact]
-        public void FindTrackMatch_FromMultipleTrackCandidates()
+        public async Task FindTrackMatch_FromMultipleTrackCandidates()
         {
             TrackHelper.SetValidPluginInstance();
             Plugin.Instance!.Configuration.ItemMatchLevel = ItemMatchLevel.IgnoreParensPunctuationAndCase;
@@ -514,7 +514,7 @@ namespace Viperinius.Plugin.SpotifyImport.Tests
             using var db = new DbRepository(":memory:");
             db.InitDb();
             SetUpLibManagerMock(libManagerMock, jfArtist);
-            wrapper = new PlaylistSyncWrapper(
+            var wrapper = new PlaylistSyncWrapper(
                 loggerMock,
                 plManagerMock,
                 libManagerMock,
@@ -558,7 +558,7 @@ namespace Viperinius.Plugin.SpotifyImport.Tests
         }
 
         [Fact]
-        public void FindTrackMatch_FromMultipleArtistCandidates()
+        public async Task FindTrackMatch_FromMultipleArtistCandidates()
         {
             TrackHelper.SetValidPluginInstance();
             Plugin.Instance!.Configuration.ItemMatchLevel = ItemMatchLevel.IgnoreParensPunctuationAndCase;
@@ -605,7 +605,7 @@ namespace Viperinius.Plugin.SpotifyImport.Tests
         }
 
         [Fact]
-        public void AddTrackMatchToCacheAndRetrieve()
+        public async Task AddTrackMatchToCacheAndRetrieve()
         {
             TrackHelper.SetValidPluginInstance();
             Plugin.Instance!.Configuration.ItemMatchLevel = ItemMatchLevel.IgnoreParensPunctuationAndCase;
