@@ -101,6 +101,19 @@ namespace Viperinius.Plugin.SpotifyImport.Utils
             )",
         };
 
+        // Without these, every hot-path lookup (cache, playlist state, ISRC resolution) is a full table scan on TEXT columns.
+        // Indexes are non-unique on purpose: a UNIQUE index would throw on existing databases that contain legacy duplicate rows.
+        private static readonly string[] _createIndexQueries = new[]
+        {
+            $"CREATE INDEX IF NOT EXISTS IX_{TableProviderTracksName}_Provider_Track ON {TableProviderTracksName} (ProviderId, TrackId)",
+            $"CREATE INDEX IF NOT EXISTS IX_{TableProviderPlaylistsName}_Provider_Playlist ON {TableProviderPlaylistsName} (ProviderId, PlaylistId)",
+            $"CREATE INDEX IF NOT EXISTS IX_{TableProviderTrackMatchesName}_TrackId ON {TableProviderTrackMatchesName} (TrackId)",
+            $"CREATE INDEX IF NOT EXISTS IX_{TableProviderPlaylistTracksName}_PlaylistId ON {TableProviderPlaylistTracksName} (PlaylistId)",
+            $"CREATE INDEX IF NOT EXISTS IX_{TableIsrcMusicBrainzRecordingName}_Isrc ON {TableIsrcMusicBrainzRecordingName} (Isrc)",
+            $"CREATE INDEX IF NOT EXISTS IX_{TableIsrcMusicBrainzReleaseName}_Isrc ON {TableIsrcMusicBrainzReleaseName} (Isrc)",
+            $"CREATE INDEX IF NOT EXISTS IX_{TableIsrcMusicBrainzRelGroupName}_Isrc ON {TableIsrcMusicBrainzRelGroupName} (Isrc)",
+        };
+
         private readonly SqliteConnectionStringBuilder _connectionStringBuilder;
         private SqliteConnection? _connection;
 
@@ -137,8 +150,8 @@ namespace Viperinius.Plugin.SpotifyImport.Utils
             // create tables
 
             using var cmd = Connection.CreateCommand();
-#pragma warning disable CA2100 // Review SQL queries for security vulnerabilities
-            cmd.CommandText = string.Join(';', _createTableQueries);
+#pragma warning disable CA2100 // Review SQL queries for security vulnerabilities --> only pre-defined query strings
+            cmd.CommandText = string.Join(';', _createTableQueries) + ';' + string.Join(';', _createIndexQueries);
 #pragma warning restore CA2100 // Review SQL queries for security vulnerabilities
             cmd.ExecuteNonQuery();
 
@@ -153,6 +166,32 @@ namespace Viperinius.Plugin.SpotifyImport.Utils
         {
             _connection = new SqliteConnection(_connectionStringBuilder.ToString());
             _connection.Open();
+            ApplyConnectionPragmas(_connection);
+        }
+
+        /// <summary>
+        /// Runs the given batch of writes inside a single transaction. Batching avoids the per-row fsync that SQLite
+        /// otherwise pays for every auto-committed statement; if <paramref name="body"/> throws, the batch is rolled back.
+        /// </summary>
+        /// <param name="body">The batch of writes to execute.</param>
+        public void RunInTransaction(Action body)
+        {
+            ArgumentNullException.ThrowIfNull(body);
+
+            using var tx = Connection.BeginTransaction();
+            body();
+            tx.Commit();
+        }
+
+        private static void ApplyConnectionPragmas(SqliteConnection connection)
+        {
+            using var cmd = connection.CreateCommand();
+
+            // WAL + synchronous=NORMAL collapses thousands of per-commit fsyncs into a handful at checkpoint time
+            // (durability-safe for a rebuildable cache db). journal_mode is a persistent, file-level setting and is a
+            // no-op for in-memory databases; synchronous/temp_store are per-connection and must be reapplied on every open.
+            cmd.CommandText = "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA temp_store=MEMORY;";
+            cmd.ExecuteNonQuery();
         }
 
         public string? GetLastProviderPlaylistState(string providerId, string providerPlaylistId)

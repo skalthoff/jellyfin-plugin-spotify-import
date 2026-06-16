@@ -92,26 +92,31 @@ namespace Viperinius.Plugin.SpotifyImport
 
                     if (playlist != null)
                     {
-                        if (_dbRepository.UpsertProviderPlaylist(Name, playlist) == null)
-                        {
-                            _logger.LogError("Failed to update / insert playlist {Name} ({Id}) into db", playlist.Name, playlistId);
-                        }
+                        var resolvedPlaylist = playlist;
+                        Playlists.Add(resolvedPlaylist);
 
-                        Playlists.Add(playlist);
-
-                        foreach (var track in playlist.Tracks)
+                        // network I/O is done; batch all of this playlist's db writes into one transaction
+                        _dbRepository.RunInTransaction(() =>
                         {
-                            if (string.IsNullOrEmpty(track.Id))
+                            if (_dbRepository.UpsertProviderPlaylist(Name, resolvedPlaylist) == null)
                             {
-                                _logger.LogError("Track has empty / invalid id: {Name}", track.Name);
-                                continue;
+                                _logger.LogError("Failed to update / insert playlist {Name} ({Id}) into db", resolvedPlaylist.Name, playlistId);
                             }
 
-                            if (_dbRepository.InsertProviderTrack(Name, track) == null)
+                            foreach (var track in resolvedPlaylist.Tracks)
                             {
-                                _logger.LogError("Failed to insert track {Name} ({Id}) into db", track.Name, track.Id);
+                                if (string.IsNullOrEmpty(track.Id))
+                                {
+                                    _logger.LogError("Track has empty / invalid id: {Name}", track.Name);
+                                    continue;
+                                }
+
+                                if (_dbRepository.InsertProviderTrack(Name, track) == null)
+                                {
+                                    _logger.LogError("Failed to insert track {Name} ({Id}) into db", track.Name, track.Id);
+                                }
                             }
-                        }
+                        });
                     }
                 }
 
@@ -153,32 +158,38 @@ namespace Viperinius.Plugin.SpotifyImport
                     continue;
                 }
 
-                _dbRepository.DeleteProviderPlaylistTracks((int)playlistDbId);
-
-                for (var ii = 0; ii < playlist.Tracks.Count; ii++)
+                // batch this playlist's delete + re-insert into one transaction (per-playlist granularity keeps
+                // already-processed playlists committed if a later one is cancelled or fails)
+                var resolvedPlaylistDbId = (int)playlistDbId;
+                _dbRepository.RunInTransaction(() =>
                 {
-                    var track = playlist.Tracks[ii];
-                    if (string.IsNullOrEmpty(track.Id))
-                    {
-                        result = false;
-                        _logger.LogError("Track has empty / invalid id: {Name}", track.Name);
-                        continue;
-                    }
+                    _dbRepository.DeleteProviderPlaylistTracks(resolvedPlaylistDbId);
 
-                    var trackDbId = _dbRepository.GetProviderTrackDbId(Name, track.Id);
-                    if (trackDbId == null)
+                    for (var ii = 0; ii < playlist.Tracks.Count; ii++)
                     {
-                        result = false;
-                        _logger.LogError("No track with name {Name} ({Id}) found in db for provider {Prov}", track.Name, track.Id, Name);
-                        continue;
-                    }
+                        var track = playlist.Tracks[ii];
+                        if (string.IsNullOrEmpty(track.Id))
+                        {
+                            result = false;
+                            _logger.LogError("Track has empty / invalid id: {Name}", track.Name);
+                            continue;
+                        }
 
-                    if (_dbRepository.UpsertProviderPlaylistTrack((int)playlistDbId, (int)trackDbId, ii) == null)
-                    {
-                        result = false;
-                        _logger.LogError("Failed to insert playlist track {Name} ({Id}) into db", track.Name, track.Id);
+                        var trackDbId = _dbRepository.GetProviderTrackDbId(Name, track.Id);
+                        if (trackDbId == null)
+                        {
+                            result = false;
+                            _logger.LogError("No track with name {Name} ({Id}) found in db for provider {Prov}", track.Name, track.Id, Name);
+                            continue;
+                        }
+
+                        if (_dbRepository.UpsertProviderPlaylistTrack(resolvedPlaylistDbId, (int)trackDbId, ii) == null)
+                        {
+                            result = false;
+                            _logger.LogError("Failed to insert playlist track {Name} ({Id}) into db", track.Name, track.Id);
+                        }
                     }
-                }
+                });
             }
 
             return result;

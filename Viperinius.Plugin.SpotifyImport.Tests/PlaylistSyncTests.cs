@@ -35,6 +35,11 @@ namespace Viperinius.Plugin.SpotifyImport.Tests
             return await GetMatchingTrackAsync(providerId, trackInfo);
         }
 
+        public async Task<(Audio? Track, ItemMatchCriteria FailedCriteria)> WrapGetMatchingTrackAsync(string providerId, ProviderTrackInfo trackInfo, Audio? cachedMatch, bool cacheResolved)
+        {
+            return await GetMatchingTrackAsync(providerId, trackInfo, cachedMatch, cacheResolved);
+        }
+
         public bool WrapSaveMatchInCache(string providerId, ProviderTrackInfo providerTrackInfo, Guid jellyfinTrackId)
         {
             return SaveMatchInCache(providerId, providerTrackInfo, jellyfinTrackId);
@@ -134,6 +139,86 @@ namespace Viperinius.Plugin.SpotifyImport.Tests
         public void Dispose()
         {
             TrackHelper.ClearAlbums();
+        }
+
+        [Fact]
+        public async Task GetMatchingTrack_ReturnsProvidedCacheMatch_WhenCacheResolved()
+        {
+            TrackHelper.SetValidPluginInstance();
+            Plugin.Instance!.Configuration.ItemMatchCriteriaRaw = (int)ItemMatchCriteria.TrackName;
+            Plugin.Instance!.Configuration.ItemMatchLevel = ItemMatchLevel.Default;
+
+            var loggerMock = Substitute.For<ILogger<PlaylistSync>>();
+            var plManagerMock = Substitute.For<MediaBrowser.Controller.Playlists.IPlaylistManager>();
+            var userManagerMock = Substitute.For<MediaBrowser.Controller.Library.IUserManager>();
+            var libManagerMock = Substitute.For<MediaBrowser.Controller.Library.ILibraryManager>();
+            SetUpLibManagerMock(libManagerMock, (MediaBrowser.Controller.Entities.BaseItem?)null);
+            using var db = new DbRepository(":memory:");
+            db.InitDb();
+
+            var wrapper = new PlaylistSyncWrapper(
+                loggerMock,
+                plManagerMock,
+                libManagerMock,
+                userManagerMock,
+                new List<ProviderPlaylistInfo>(),
+                new Dictionary<string, string>(),
+                new ManualMapStore(Substitute.For<ILogger<ManualMapStore>>()),
+                db);
+
+            var prov = TrackHelper.CreateProviderItem("Track", "Album", new List<string> { "AlbArt" }, new List<string> { "Artist" });
+            var provided = new Audio { Id = Guid.NewGuid() };
+
+            var (match, crit) = await wrapper.WrapGetMatchingTrackAsync("prov", prov, provided, cacheResolved: true);
+
+            // the pre-resolved match short-circuits the pipeline and is returned as-is
+            Assert.Same(provided, match);
+            Assert.Equal(ItemMatchCriteria.None, crit);
+        }
+
+        [Fact]
+        public async Task GetMatchingTrack_SkipsCacheDbLookup_WhenCacheResolved()
+        {
+            TrackHelper.SetValidPluginInstance();
+            Plugin.Instance!.Configuration.ItemMatchCriteriaRaw = (int)ItemMatchCriteria.TrackName;
+            Plugin.Instance!.Configuration.ItemMatchLevel = ItemMatchLevel.Default;
+
+            var loggerMock = Substitute.For<ILogger<PlaylistSync>>();
+            var plManagerMock = Substitute.For<MediaBrowser.Controller.Playlists.IPlaylistManager>();
+            var userManagerMock = Substitute.For<MediaBrowser.Controller.Library.IUserManager>();
+            var libManagerMock = Substitute.For<MediaBrowser.Controller.Library.ILibraryManager>();
+            SetUpLibManagerMock(libManagerMock, (MediaBrowser.Controller.Entities.BaseItem?)null);
+            libManagerMock
+                .GetItemById<Audio>(Arg.Any<Guid>())
+                .Returns(info => new Audio { Id = info.ArgAt<Guid>(0) });
+            using var db = new DbRepository(":memory:");
+            db.InitDb();
+
+            var prov = TrackHelper.CreateProviderItem("Track", "Album", new List<string> { "AlbArt" }, new List<string> { "Artist" });
+
+            // seed the cache db with a usable match for this provider track
+            var trackDbId = db.InsertProviderTrack("prov", prov);
+            var cachedId = Guid.NewGuid();
+            db.InsertProviderTrackMatch((long)trackDbId!, cachedId.ToString(), Plugin.Instance!.Configuration.ItemMatchLevel, Plugin.Instance!.Configuration.ItemMatchCriteria);
+
+            var wrapper = new PlaylistSyncWrapper(
+                loggerMock,
+                plManagerMock,
+                libManagerMock,
+                userManagerMock,
+                new List<ProviderPlaylistInfo>(),
+                new Dictionary<string, string>(),
+                new ManualMapStore(Substitute.For<ILogger<ManualMapStore>>()),
+                db);
+
+            // sanity: the default path consults the cache db and finds the seeded match
+            var (defaultMatch, _) = await wrapper.WrapGetMatchingTrackAsync("prov", prov);
+            Assert.NotNull(defaultMatch);
+            Assert.Equal(cachedId, defaultMatch!.Id);
+
+            // with the cache pre-resolved to a miss, the cache db must NOT be consulted again -> no match
+            var (skipMatch, _) = await wrapper.WrapGetMatchingTrackAsync("prov", prov, null, cacheResolved: true);
+            Assert.Null(skipMatch);
         }
 
         [Fact]
