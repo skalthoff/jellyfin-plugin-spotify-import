@@ -131,5 +131,61 @@ namespace Viperinius.Plugin.SpotifyImport.Tests.Db
             }
             Assert.NotEmpty(tracks);
         }
+
+        [Fact]
+        public void CanRetrieveMatchesBySharedIsrc()
+        {
+            using var db = DbRepositoryWrapper.GetInstance();
+            db.InitDb();
+
+            var matchA = Guid.NewGuid();
+
+            // two provider tracks (different track ids) sharing one ISRC, and a third with a different ISRC
+            var trackA = (long)db.InsertProviderTrack("Spotify", new ProviderTrackInfo { Id = "a", IsrcId = "ISRC1" })!;
+            var trackB = (long)db.InsertProviderTrack("Spotify", new ProviderTrackInfo { Id = "b", IsrcId = "ISRC1" })!;
+            var trackC = (long)db.InsertProviderTrack("Spotify", new ProviderTrackInfo { Id = "c", IsrcId = "ISRC2" })!;
+
+            var configLevel = ItemMatchLevel.IgnoreCase;
+            var configCriteria = ItemMatchCriteria.TrackName | ItemMatchCriteria.AlbumName;
+
+            // compatible match on A (stricter level, superset criteria)
+            db.InsertProviderTrackMatch(trackA, matchA.ToString(), ItemMatchLevel.Default, ItemMatchCriteria.TrackName | ItemMatchCriteria.AlbumName | ItemMatchCriteria.Artists);
+            db.InsertProviderTrackMatch(trackC, Guid.NewGuid().ToString(), ItemMatchLevel.Default, configCriteria);
+
+            // resolving B reuses A's match via the shared ISRC
+            var results = db.GetProviderTrackMatchesByIsrc("ISRC1", trackB, configLevel, configCriteria).ToList();
+            Assert.Single(results);
+            Assert.Equal(matchA, results[0].MatchId);
+
+            // excluding A (the only track with a match for ISRC1) yields nothing
+            Assert.Empty(db.GetProviderTrackMatchesByIsrc("ISRC1", trackA, configLevel, configCriteria));
+
+            // a different ISRC must not surface A's match
+            Assert.DoesNotContain(db.GetProviderTrackMatchesByIsrc("ISRC2", trackB, configLevel, configCriteria), m => m.MatchId == matchA);
+
+            // empty / null ISRC returns nothing
+            Assert.Empty(db.GetProviderTrackMatchesByIsrc(string.Empty, trackB, configLevel, configCriteria));
+            Assert.Empty(db.GetProviderTrackMatchesByIsrc(null, trackB, configLevel, configCriteria));
+        }
+
+        [Fact]
+        public void GetMatchesBySharedIsrcFiltersIncompatible()
+        {
+            using var db = DbRepositoryWrapper.GetInstance();
+            db.InitDb();
+
+            var trackA = (long)db.InsertProviderTrack("Spotify", new ProviderTrackInfo { Id = "a", IsrcId = "ISRC1" })!;
+            var trackB = (long)db.InsertProviderTrack("Spotify", new ProviderTrackInfo { Id = "b", IsrcId = "ISRC1" })!;
+
+            var configLevel = ItemMatchLevel.Default;
+            var configCriteria = ItemMatchCriteria.TrackName | ItemMatchCriteria.AlbumName;
+
+            // looser level -> filtered out
+            db.InsertProviderTrackMatch(trackA, Guid.NewGuid().ToString(), ItemMatchLevel.Fuzzy, configCriteria);
+            // missing a configured criterion (no AlbumName) -> filtered out (also exercises the bitwise-AND parens)
+            db.InsertProviderTrackMatch(trackA, Guid.NewGuid().ToString(), ItemMatchLevel.Default, ItemMatchCriteria.TrackName);
+
+            Assert.Empty(db.GetProviderTrackMatchesByIsrc("ISRC1", trackB, configLevel, configCriteria));
+        }
     }
 }

@@ -12,8 +12,30 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
 {
     internal class MusicBrainzFinder : ITrackMatchFinder
     {
+        private const string ProviderRecording = "MusicBrainzRecording";
+        private const string ProviderTrack = "MusicBrainzTrack";
+        private const string ProviderAlbum = "MusicBrainzAlbum";
+        private const string ProviderReleaseGroup = "MusicBrainzReleaseGroup";
+
         private readonly ILibraryManager _libraryManager;
         private readonly DbRepository _dbRepository;
+
+        // per-sync index of the library's MusicBrainz-tagged audio, keyed by each kind of MusicBrainz id.
+        // MusicBrainzFinder is constructed once per sync run, so this is naturally scoped to a single sync.
+        // Previously every track issued one library query per MusicBrainz id (O(tracks * ids) round-trips);
+        // this collapses that into a single enumeration plus constant-time dictionary lookups.
+        private readonly object _indexLock = new();
+        private readonly Dictionary<string, List<Audio>> _recordingIndex = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, List<Audio>> _trackIndex = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, List<Audio>> _releaseIndex = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, List<Audio>> _releaseGroupIndex = new(StringComparer.Ordinal);
+
+        // A sync resolves tracks serially (PlaylistSync iterates playlists and tracks with foreach+await, no
+        // parallel fan-out), so a single thread builds and reads the index. The flags are still marked volatile
+        // so the lock-free fast-path read pairs with the build's writes (acquire/release): if track resolution
+        // is ever parallelised, a reader that observes _indexBuilt also observes the fully-populated dictionaries.
+        private volatile bool _indexBuilt;
+        private volatile bool _indexUnavailable;
 
         private bool? _anyLibraryUsesMusicBrainz;
 
@@ -36,11 +58,11 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
 
         public bool IsEnabled => Plugin.Instance?.Configuration.EnabledTrackMatchFinders.HasFlag(EnabledTrackMatchFinders.MusicBrainz) ?? false;
 
-        public async Task<Audio?> FindTrackAsync(string providerId, ProviderTrackInfo providerTrackInfo)
+        public Task<Audio?> FindTrackAsync(string providerId, ProviderTrackInfo providerTrackInfo)
         {
             if (!IsEnabled || !AnyLibraryUsesMusicBrainz || string.IsNullOrWhiteSpace(providerTrackInfo.IsrcId))
             {
-                return null;
+                return Task.FromResult<Audio?>(null);
             }
 
             var foundIsrcMappings = _dbRepository.GetIsrcMusicBrainzMapping(isrc: providerTrackInfo.IsrcId, hasAnyMbIdsSet: true);
@@ -56,6 +78,157 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
                 mbReleaseGroups.UnionWith(mapping.MusicBrainzReleaseGroupIds.Select(r => r.ToString()));
             }
 
+            // no MusicBrainz ids for this ISRC: nothing to look up, do not touch the library at all
+            if (mbRecordings.Count == 0 && mbTracks.Count == 0 && mbReleases.Count == 0 && mbReleaseGroups.Count == 0)
+            {
+                return Task.FromResult<Audio?>(null);
+            }
+
+            if (!_indexUnavailable)
+            {
+                EnsureIndexBuilt();
+            }
+
+            // if the bulk index could not be built, fall back to the original per-id library queries so matching still works
+            if (_indexUnavailable)
+            {
+                return FindTrackLiveAsync(mbRecordings, mbTracks, mbReleases, mbReleaseGroups, providerTrackInfo);
+            }
+
+            return Task.FromResult(FindTrackInIndex(mbRecordings, mbTracks, mbReleases, mbReleaseGroups, providerTrackInfo));
+        }
+
+        private void EnsureIndexBuilt()
+        {
+            if (_indexBuilt)
+            {
+                return;
+            }
+
+            lock (_indexLock)
+            {
+                if (_indexBuilt || _indexUnavailable)
+                {
+                    return;
+                }
+
+                try
+                {
+                    // single enumeration of every audio item carrying any MusicBrainz id. The empty values mean
+                    // "has this provider key with any value" (same shape IsServerUsingMusicBrainz uses).
+                    var allItems = _libraryManager.GetItemList(new MediaBrowser.Controller.Entities.InternalItemsQuery
+                    {
+                        HasAnyProviderId = new Dictionary<string, string>
+                        {
+                            { ProviderRecording, string.Empty },
+                            { ProviderTrack, string.Empty },
+                            { ProviderAlbum, string.Empty },
+                            { ProviderReleaseGroup, string.Empty },
+                        },
+                        IncludeItemTypes = new[] { BaseItemKind.Audio },
+                    });
+
+                    foreach (var item in allItems)
+                    {
+                        if (item is not Audio audio)
+                        {
+                            continue;
+                        }
+
+                        AddToIndex(_recordingIndex, audio, ProviderRecording);
+                        AddToIndex(_trackIndex, audio, ProviderTrack);
+                        AddToIndex(_releaseIndex, audio, ProviderAlbum);
+                        AddToIndex(_releaseGroupIndex, audio, ProviderReleaseGroup);
+                    }
+
+                    _indexBuilt = true;
+                }
+                catch (Exception)
+                {
+                    // building the bulk index failed; mark it unavailable so all lookups fall back to live queries
+                    _indexUnavailable = true;
+                }
+            }
+        }
+
+        private static void AddToIndex(Dictionary<string, List<Audio>> index, Audio audio, string providerKey)
+        {
+            if (audio.ProviderIds == null || !audio.ProviderIds.TryGetValue(providerKey, out var value) || string.IsNullOrEmpty(value))
+            {
+                return;
+            }
+
+            if (!index.TryGetValue(value, out var list))
+            {
+                list = new List<Audio>();
+                index[value] = list;
+            }
+
+            list.Add(audio);
+        }
+
+        private static void CollectFromIndex(Dictionary<string, List<Audio>> index, HashSet<string> ids, List<Audio> into)
+        {
+            foreach (var id in ids)
+            {
+                if (index.TryGetValue(id, out var list))
+                {
+                    into.AddRange(list);
+                }
+            }
+        }
+
+        private static Audio? PickDeterministicDirectHit(List<Audio> candidates)
+        {
+            // exact recording/track id is the strongest signal, so a direct hit wins without a name check.
+            // order by Id so the result is stable when several library items share one MusicBrainz id.
+            return candidates.Count == 0 ? null : candidates.OrderBy(a => a.Id).First();
+        }
+
+        private Audio? FindTrackInIndex(HashSet<string> mbRecordings, HashSet<string> mbTracks, HashSet<string> mbReleases, HashSet<string> mbReleaseGroups, ProviderTrackInfo providerTrackInfo)
+        {
+            // phase 1: direct hits by recording / track id
+            if (mbRecordings.Count > 0 || mbTracks.Count > 0)
+            {
+                var directHits = new List<Audio>();
+                CollectFromIndex(_recordingIndex, mbRecordings, directHits);
+                CollectFromIndex(_trackIndex, mbTracks, directHits);
+
+                var directHit = PickDeterministicDirectHit(directHits);
+                if (directHit != null)
+                {
+                    return directHit;
+                }
+            }
+
+            // phase 2: release / release-group candidates disambiguated by name match
+            if (mbReleases.Count > 0 || mbReleaseGroups.Count > 0)
+            {
+                var candidates = new List<Audio>();
+                CollectFromIndex(_releaseIndex, mbReleases, candidates);
+                CollectFromIndex(_releaseGroupIndex, mbReleaseGroups, candidates);
+
+                var matchCandidates = new List<(int Prio, ItemMatchLevel Level, Audio Item)>();
+                foreach (var track in candidates.GroupBy(a => a.Id).Select(g => g.First()))
+                {
+                    var matchInfo = MatchTrack(track, providerTrackInfo);
+                    if (matchInfo != null)
+                    {
+                        matchCandidates.Add(((int, ItemMatchLevel, Audio))matchInfo);
+                    }
+                }
+
+                if (matchCandidates.Count > 0)
+                {
+                    return SortAndPick(matchCandidates);
+                }
+            }
+
+            return null;
+        }
+
+        private async Task<Audio?> FindTrackLiveAsync(HashSet<string> mbRecordings, HashSet<string> mbTracks, HashSet<string> mbReleases, HashSet<string> mbReleaseGroups, ProviderTrackInfo providerTrackInfo)
+        {
             if (mbRecordings.Count > 0 || mbTracks.Count > 0)
             {
                 // library manager does not seem to support querying multiple ProviderIds with same key, so every different MB id has to be done in a separate query...
@@ -66,12 +239,12 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
                     var idDict = new Dictionary<string, string>();
                     if (ii < mbRecordings.Count)
                     {
-                        idDict.Add("MusicBrainzRecording", mbRecordings.ElementAt(ii));
+                        idDict.Add(ProviderRecording, mbRecordings.ElementAt(ii));
                     }
 
                     if (ii < mbTracks.Count)
                     {
-                        idDict.Add("MusicBrainzTrack", mbTracks.ElementAt(ii));
+                        idDict.Add(ProviderTrack, mbTracks.ElementAt(ii));
                     }
 
                     tasks.Add(Task.Run(() => _libraryManager.GetItemList(new MediaBrowser.Controller.Entities.InternalItemsQuery
@@ -103,12 +276,12 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
                     var idDict = new Dictionary<string, string>();
                     if (ii < mbReleases.Count)
                     {
-                        idDict.Add("MusicBrainzAlbum", mbReleases.ElementAt(ii));
+                        idDict.Add(ProviderAlbum, mbReleases.ElementAt(ii));
                     }
 
                     if (ii < mbReleaseGroups.Count)
                     {
-                        idDict.Add("MusicBrainzReleaseGroup", mbReleaseGroups.ElementAt(ii));
+                        idDict.Add(ProviderReleaseGroup, mbReleaseGroups.ElementAt(ii));
                     }
 
                     tasks.Add(Task.Run(() => _libraryManager.GetItemList(new MediaBrowser.Controller.Entities.InternalItemsQuery
@@ -134,21 +307,26 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
 
             if (matchCandidates.Count > 0)
             {
-                // sort by prio first, then match level
-                matchCandidates.Sort((a, b) =>
-                {
-                    var result = a.Item1.CompareTo(b.Item1);
-                    if (result == 0)
-                    {
-                        result = a.Item2.CompareTo(b.Item2);
-                    }
-
-                    return result;
-                });
-                return matchCandidates.First().Item3;
+                return SortAndPick(matchCandidates);
             }
 
             return null;
+        }
+
+        private static Audio SortAndPick(List<(int Prio, ItemMatchLevel Level, Audio Item)> matchCandidates)
+        {
+            // sort by prio first, then match level
+            matchCandidates.Sort((a, b) =>
+            {
+                var result = a.Prio.CompareTo(b.Prio);
+                if (result == 0)
+                {
+                    result = a.Level.CompareTo(b.Level);
+                }
+
+                return result;
+            });
+            return matchCandidates.First().Item;
         }
 
         private (int Prio, ItemMatchLevel Level, Audio Item)? MatchTrack(Audio track, ProviderTrackInfo providerTrackInfo)

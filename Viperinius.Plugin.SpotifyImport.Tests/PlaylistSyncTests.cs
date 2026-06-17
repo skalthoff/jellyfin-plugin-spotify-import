@@ -40,6 +40,22 @@ namespace Viperinius.Plugin.SpotifyImport.Tests
             return await GetMatchingTrackAsync(providerId, trackInfo, cachedMatch, cacheResolved);
         }
 
+        public async Task<(Audio? Track, ItemMatchCriteria FailedCriteria)> WrapGetMatchingTrackAsync(string providerId, ProviderTrackInfo trackInfo, MatchStats stats)
+        {
+            return await GetMatchingTrackAsync(providerId, trackInfo, null, false, stats);
+        }
+
+        public Task<MatchStats> WrapFindTracksAndAddToPlaylist(
+            MediaBrowser.Controller.Playlists.Playlist playlist,
+            ProviderPlaylistInfo providerPlaylistInfo,
+            Jellyfin.Database.Implementations.Entities.User user,
+            IProgress<double> progress,
+            Tuple<double, double> progressRange,
+            System.Threading.CancellationToken cancellationToken)
+        {
+            return FindTracksAndAddToPlaylist(playlist, providerPlaylistInfo, user, progress, progressRange, cancellationToken);
+        }
+
         public bool WrapSaveMatchInCache(string providerId, ProviderTrackInfo providerTrackInfo, Guid jellyfinTrackId)
         {
             return SaveMatchInCache(providerId, providerTrackInfo, jellyfinTrackId);
@@ -748,6 +764,127 @@ namespace Viperinius.Plugin.SpotifyImport.Tests
 
             foundMatch = await finder.FindTrackAsync(correctProviderId, new ProviderTrackInfo());
             Assert.Null(foundMatch);
+        }
+
+        [Fact]
+        public async Task FindTracksAndAddToPlaylistRecordsStats()
+        {
+            TrackHelper.SetValidPluginInstance();
+
+            const string providerName = "Spotify";
+            var alreadyPresentTrack = new ProviderTrackInfo { Id = "t-present", Name = "Present", IsrcId = "i1" };
+            var newlyAddedTrack = new ProviderTrackInfo { Id = "t-new", Name = "New", IsrcId = "i2" };
+            var missingTrack = new ProviderTrackInfo { Id = "t-missing", Name = "Missing", IsrcId = "i3" };
+
+            var presentGuid = Guid.NewGuid();
+            var newGuid = Guid.NewGuid();
+
+            var loggerMock = Substitute.For<ILogger<PlaylistSync>>();
+            var plManagerMock = Substitute.For<MediaBrowser.Controller.Playlists.IPlaylistManager>();
+            var userManagerMock = Substitute.For<MediaBrowser.Controller.Library.IUserManager>();
+            var libManagerMock = Substitute.For<MediaBrowser.Controller.Library.ILibraryManager>();
+            SetUpLibManagerMock(libManagerMock, (MediaBrowser.Controller.Entities.BaseItem?)null);
+            libManagerMock
+                .GetItemById<Audio>(Arg.Any<Guid>())
+                .Returns(info => new Audio { Id = info.ArgAt<Guid>(0) });
+
+            using var db = new DbRepository(":memory:");
+            db.InitDb();
+
+            // both present and newly-added resolve from the result cache
+            var presentDbId = db.InsertProviderTrack(providerName, alreadyPresentTrack);
+            db.InsertProviderTrackMatch((long)presentDbId!, presentGuid.ToString(), Plugin.Instance!.Configuration.ItemMatchLevel, Plugin.Instance!.Configuration.ItemMatchCriteria);
+            var newDbId = db.InsertProviderTrack(providerName, newlyAddedTrack);
+            db.InsertProviderTrackMatch((long)newDbId!, newGuid.ToString(), Plugin.Instance!.Configuration.ItemMatchLevel, Plugin.Instance!.Configuration.ItemMatchCriteria);
+            // missingTrack has no cache row and no finder will match it
+
+            var playlist = Substitute.For<MediaBrowser.Controller.Playlists.Playlist>();
+            playlist
+                .GetChildren(Arg.Any<Jellyfin.Database.Implementations.Entities.User>(), Arg.Any<bool>(), Arg.Any<MediaBrowser.Controller.Entities.InternalItemsQuery>())
+                .Returns(new List<MediaBrowser.Controller.Entities.BaseItem> { new Audio { Id = presentGuid } });
+
+            var user = new Jellyfin.Database.Implementations.Entities.User("test", "prov", "prov");
+
+            var wrapper = new PlaylistSyncWrapper(
+                loggerMock,
+                plManagerMock,
+                libManagerMock,
+                userManagerMock,
+                new List<ProviderPlaylistInfo>(),
+                new Dictionary<string, string>(),
+                new ManualMapStore(Substitute.For<ILogger<ManualMapStore>>()),
+                db);
+
+            var providerPlaylist = new ProviderPlaylistInfo
+            {
+                Name = "Test",
+                ProviderName = providerName,
+                Tracks = new List<ProviderTrackInfo> { alreadyPresentTrack, newlyAddedTrack, missingTrack },
+            };
+
+            var stats = await wrapper.WrapFindTracksAndAddToPlaylist(
+                playlist,
+                providerPlaylist,
+                user,
+                Substitute.For<IProgress<double>>(),
+                new Tuple<double, double>(0d, 100d),
+                System.Threading.CancellationToken.None);
+
+            Assert.Equal(3, stats.TotalTracks);
+            Assert.Equal(2, stats.CacheHits);
+            Assert.Equal(1, stats.AlreadyInPlaylist);
+            Assert.Equal(1, stats.NewlyAdded);
+            Assert.Equal(1, stats.Missing);
+            Assert.Equal(2, stats.Matched);
+        }
+
+        [Fact]
+        public async Task GetMatchingTrackReusesAcrossIsrcAndWritesForwardRow()
+        {
+            TrackHelper.SetValidPluginInstance();
+
+            const string providerName = "Spotify";
+            var resolvedGuid = Guid.NewGuid();
+            var trackA = new ProviderTrackInfo { Id = "a", Name = "Song", AlbumName = "Album", ArtistNames = new List<string> { "Artist" }, AlbumArtistNames = new List<string> { "Artist" }, IsrcId = "ISRCX" };
+            var trackB = new ProviderTrackInfo { Id = "b", Name = "Song", AlbumName = "Album", ArtistNames = new List<string> { "Artist" }, AlbumArtistNames = new List<string> { "Artist" }, IsrcId = "ISRCX" };
+
+            var loggerMock = Substitute.For<ILogger<PlaylistSync>>();
+            var plManagerMock = Substitute.For<MediaBrowser.Controller.Playlists.IPlaylistManager>();
+            var userManagerMock = Substitute.For<MediaBrowser.Controller.Library.IUserManager>();
+            var libManagerMock = Substitute.For<MediaBrowser.Controller.Library.ILibraryManager>();
+            SetUpLibManagerMock(libManagerMock, (MediaBrowser.Controller.Entities.BaseItem?)null);
+            libManagerMock
+                .GetItemById<Audio>(Arg.Any<Guid>())
+                .Returns(info => new Audio { Id = info.ArgAt<Guid>(0), Name = "Song", Album = "Album", Artists = new[] { "Artist" }, AlbumArtists = new[] { "Artist" } });
+
+            using var db = new DbRepository(":memory:");
+            db.InitDb();
+            var dbA = (long)db.InsertProviderTrack(providerName, trackA)!;
+            var dbB = (long)db.InsertProviderTrack(providerName, trackB)!;
+            // only track A has a resolved match; B shares its ISRC
+            db.InsertProviderTrackMatch(dbA, resolvedGuid.ToString(), Plugin.Instance!.Configuration.ItemMatchLevel, Plugin.Instance!.Configuration.ItemMatchCriteria);
+
+            var wrapper = new PlaylistSyncWrapper(
+                loggerMock,
+                plManagerMock,
+                libManagerMock,
+                userManagerMock,
+                new List<ProviderPlaylistInfo>(),
+                new Dictionary<string, string>(),
+                new ManualMapStore(Substitute.For<ILogger<ManualMapStore>>()),
+                db);
+
+            // B has no direct cache row yet
+            Assert.Empty(db.GetProviderTrackMatch(dbB));
+
+            var (match, _) = await wrapper.WrapGetMatchingTrackAsync(providerName, trackB);
+            Assert.NotNull(match);
+            Assert.Equal(resolvedGuid, match.Id);
+
+            // a forward match row was written for B so the next sync resolves it from the direct cache
+            var forward = db.GetProviderTrackMatch(dbB).ToList();
+            Assert.Single(forward);
+            Assert.Equal(resolvedGuid, forward[0].MatchId);
         }
     }
 }

@@ -88,6 +88,7 @@ namespace Viperinius.Plugin.SpotifyImport.Tests.Db
             var expectedIndexes = new HashSet<string>
             {
                 "IX_ProviderTracks_Provider_Track",
+                "IX_ProviderTracks_IsrcId",
                 "IX_ProviderPlaylists_Provider_Playlist",
                 "IX_ProviderTrackMatches_TrackId",
                 "IX_ProviderPlaylistTracks_PlaylistId",

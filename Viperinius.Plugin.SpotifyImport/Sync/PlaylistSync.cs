@@ -33,6 +33,7 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
 
         private readonly CacheFinder _cacheFinder;
         private readonly ManualMapFinder _manualMapFinder;
+        private readonly IsrcCacheFinder _isrcCacheFinder;
         private readonly MusicBrainzFinder _musicBrainzFinder;
         private readonly StringMatchFinder _stringMatchFinder;
 
@@ -57,6 +58,7 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
 
             _cacheFinder = new CacheFinder(_libraryManager, _dbRepository);
             _manualMapFinder = new ManualMapFinder(_libraryManager, _manualMapStore);
+            _isrcCacheFinder = new IsrcCacheFinder(_logger, _libraryManager, _dbRepository);
             _musicBrainzFinder = new MusicBrainzFinder(_libraryManager, _dbRepository);
             _stringMatchFinder = new StringMatchFinder(_logger, _libraryManager);
         }
@@ -66,6 +68,7 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
             var progressValue = 0d;
             var providerPlaylistCount = _providerPlaylists.Count;
             var providerPlaylistIndexProgress = 0;
+            var grandTotalStats = new MatchStats();
             foreach (var providerPlaylist in _providerPlaylists)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -148,15 +151,19 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
                     await _libraryManager.UpdateItemAsync(playlist, playlist.GetParent(), updateReason, cancellationToken).ConfigureAwait(false);
                 }
 
-                await FindTracksAndAddToPlaylist(playlist, providerPlaylist, user, progress, new Tuple<double, double>(progressValue, nextProgress), cancellationToken).ConfigureAwait(false);
+                var playlistStats = await FindTracksAndAddToPlaylist(playlist, providerPlaylist, user, progress, new Tuple<double, double>(progressValue, nextProgress), cancellationToken).ConfigureAwait(false);
+                grandTotalStats.Add(playlistStats);
 
                 progressValue = nextProgress;
                 progress.Report(progressValue);
             }
+
+            LogMatchStats("all playlists", grandTotalStats);
         }
 
-        private async Task FindTracksAndAddToPlaylist(Playlist playlist, ProviderPlaylistInfo providerPlaylistInfo, User user, IProgress<double> progress, Tuple<double, double> progressRange, CancellationToken cancellationToken)
+        protected async Task<MatchStats> FindTracksAndAddToPlaylist(Playlist playlist, ProviderPlaylistInfo providerPlaylistInfo, User user, IProgress<double> progress, Tuple<double, double> progressRange, CancellationToken cancellationToken)
         {
+            var stats = new MatchStats();
             var newTracks = new List<Guid>();
             var missingTracks = new List<ProviderTrackInfo>();
 
@@ -178,12 +185,21 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
                     continue;
                 }
 
+                stats.TotalTracks++;
+
                 // resolve the cached match once: reuse it both to skip tracks already in the playlist and as the
                 // first step of the match pipeline, so the cache db lookup runs at most once per track
                 var cachedMatch = await _cacheFinder.FindTrackAsync(providerPlaylistInfo.ProviderName, providerTrack).ConfigureAwait(false);
+                if (cachedMatch != null)
+                {
+                    // counted here (not in GetMatchingTrackAsync) so tracks already in the playlist, which skip the
+                    // pipeline below, are still attributed to the cache
+                    stats.CacheHits++;
+                }
+
                 if (cachedMatch == null || !existingTrackIds.Contains(cachedMatch.Id))
                 {
-                    var (track, failedCriterium) = await GetMatchingTrackAsync(providerPlaylistInfo.ProviderName, providerTrack, cachedMatch, cacheResolved: true).ConfigureAwait(false);
+                    var (track, failedCriterium) = await GetMatchingTrackAsync(providerPlaylistInfo.ProviderName, providerTrack, cachedMatch, cacheResolved: true, stats).ConfigureAwait(false);
                     if (failedCriterium != ItemMatchCriteria.None && (Plugin.Instance?.Configuration.EnableVerboseLogging ?? false))
                     {
                         _logger.LogInformation(
@@ -196,12 +212,28 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
 
                     if (track != null)
                     {
-                        newTracks.Add(track.Id);
+                        // a finder can resolve to an item already in the playlist (or one another track in this
+                        // run just added). existingTrackIds.Add returns false in that case, so we avoid re-adding
+                        // it and attribute it to AlreadyInPlaylist rather than over-reporting NewlyAdded.
+                        if (existingTrackIds.Add(track.Id))
+                        {
+                            newTracks.Add(track.Id);
+                            stats.NewlyAdded++;
+                        }
+                        else
+                        {
+                            stats.AlreadyInPlaylist++;
+                        }
                     }
                     else
                     {
                         missingTracks.Add(providerTrack);
+                        stats.Missing++;
                     }
+                }
+                else
+                {
+                    stats.AlreadyInPlaylist++;
                 }
 
                 progressValue = ((double)providerTrackProgressIndex / providerPlaylistInfo.Tracks.Count * (progressRange.Item2 - progressRange.Item1)) + progressRange.Item1;
@@ -222,9 +254,12 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
 
                 await MissingTrackStore.WriteFile(missingFilePath, missingTracks).ConfigureAwait(false);
             }
+
+            LogMatchStats(playlist.Name, stats);
+            return stats;
         }
 
-        protected async Task<(Audio? Track, ItemMatchCriteria FailedCriteria)> GetMatchingTrackAsync(string providerId, ProviderTrackInfo providerTrackInfo, Audio? cachedMatch = null, bool cacheResolved = false)
+        protected async Task<(Audio? Track, ItemMatchCriteria FailedCriteria)> GetMatchingTrackAsync(string providerId, ProviderTrackInfo providerTrackInfo, Audio? cachedMatch = null, bool cacheResolved = false, MatchStats? stats = null)
         {
             var failedMatchCriterium = ItemMatchCriteria.None;
             if (Plugin.Instance?.Configuration.EnableVerboseLogging ?? false)
@@ -259,6 +294,29 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
                     _logger.LogInformation("Found manual mapping for track with id {Id}", match.Id);
                 }
 
+                if (stats != null)
+                {
+                    stats.ManualMapHits++;
+                }
+
+                SaveMatchInCache(providerId, providerTrackInfo, match.Id);
+                return (match, failedMatchCriterium);
+            }
+
+            // 2.5 reuse a match already resolved for another provider track sharing this ISRC
+            match = await _isrcCacheFinder.FindTrackAsync(providerId, providerTrackInfo).ConfigureAwait(false);
+            if (match != null)
+            {
+                if (Plugin.Instance?.Configuration.EnableVerboseLogging ?? false)
+                {
+                    _logger.LogInformation("Reused match for track with id {Id} from another track sharing the same ISRC", match.Id);
+                }
+
+                if (stats != null)
+                {
+                    stats.IsrcReuseHits++;
+                }
+
                 SaveMatchInCache(providerId, providerTrackInfo, match.Id);
                 return (match, failedMatchCriterium);
             }
@@ -272,6 +330,11 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
                     _logger.LogInformation("Found match for track with id {Id} by ISRC and MusicBrainz id", match.Id);
                 }
 
+                if (stats != null)
+                {
+                    stats.MusicBrainzHits++;
+                }
+
                 SaveMatchInCache(providerId, providerTrackInfo, match.Id);
                 return (match, failedMatchCriterium);
             }
@@ -282,6 +345,11 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
                 var legacyMatch = GetMatchingTrackLegacy(providerTrackInfo, out failedMatchCriterium);
                 if (legacyMatch != null)
                 {
+                    if (stats != null)
+                    {
+                        stats.StringMatchHits++;
+                    }
+
                     SaveMatchInCache(providerId, providerTrackInfo, legacyMatch.Id);
                 }
 
@@ -296,6 +364,11 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
                 if (Plugin.Instance?.Configuration.EnableVerboseLogging ?? false)
                 {
                     _logger.LogInformation("Found match for track with id {Id} by string comparison", match.Id);
+                }
+
+                if (stats != null)
+                {
+                    stats.StringMatchHits++;
                 }
 
                 SaveMatchInCache(providerId, providerTrackInfo, match.Id);
@@ -348,33 +421,8 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
         private static bool ItemMatchesTrackInfo(Audio audioItem, ProviderTrackInfo trackInfo, out ItemMatchCriteria failedCriterium)
         {
             var level = Plugin.Instance?.Configuration.ItemMatchLevel ?? ItemMatchLevel.Default;
-            failedCriterium = ItemMatchCriteria.None;
-
-            if ((Plugin.Instance?.Configuration.ItemMatchCriteria.HasFlag(ItemMatchCriteria.Artists) ?? false) && !TrackComparison.ArtistOneContained(audioItem, trackInfo, level))
-            {
-                failedCriterium = ItemMatchCriteria.Artists;
-                return false;
-            }
-
-            if ((Plugin.Instance?.Configuration.ItemMatchCriteria.HasFlag(ItemMatchCriteria.AlbumName) ?? false) && !TrackComparison.AlbumNameEqual(audioItem, trackInfo, level).ComparisonResult)
-            {
-                failedCriterium = ItemMatchCriteria.AlbumName;
-                return false;
-            }
-
-            if ((Plugin.Instance?.Configuration.ItemMatchCriteria.HasFlag(ItemMatchCriteria.AlbumArtists) ?? false) && !TrackComparison.AlbumArtistOneContained(audioItem, trackInfo, level))
-            {
-                failedCriterium = ItemMatchCriteria.AlbumArtists;
-                return false;
-            }
-
-            if ((Plugin.Instance?.Configuration.ItemMatchCriteria.HasFlag(ItemMatchCriteria.TrackName) ?? false) && !TrackComparison.TrackNameEqual(audioItem, trackInfo, level).ComparisonResult)
-            {
-                failedCriterium = ItemMatchCriteria.TrackName;
-                return false;
-            }
-
-            return true;
+            var criteria = Plugin.Instance?.Configuration.ItemMatchCriteria ?? ItemMatchCriteria.None;
+            return TrackCriteriaMatcher.Matches(audioItem, trackInfo, level, criteria, out failedCriterium);
         }
 
         private async Task<Playlist?> GetOrCreatePlaylistByName(string name, User user, bool shouldBePrivate, bool deleteExistingPlaylist)
@@ -437,6 +485,25 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
                                $"playlist {providerPlaylistInfo.Id} (at {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} [UTC])";
 
             await _libraryManager.UpdateItemAsync(playlist, playlist.GetParent(), ItemUpdateType.MetadataEdit, cancellationToken).ConfigureAwait(false);
+        }
+
+        private void LogMatchStats(string label, MatchStats stats)
+        {
+            // always logged (not gated behind verbose logging): a per-run summary explains how many tracks
+            // matched and via which finder, without the noise of a line per track.
+            _logger.LogInformation(
+                "Match summary for {Target}: {Matched}/{Total} matched (cache {CacheHits}, manual {ManualMapHits}, isrc-reuse {IsrcReuseHits}, musicbrainz {MusicBrainzHits}, string {StringMatchHits}); {NewlyAdded} added, {AlreadyInPlaylist} already present, {Missing} missing",
+                label,
+                stats.Matched,
+                stats.TotalTracks,
+                stats.CacheHits,
+                stats.ManualMapHits,
+                stats.IsrcReuseHits,
+                stats.MusicBrainzHits,
+                stats.StringMatchHits,
+                stats.NewlyAdded,
+                stats.AlreadyInPlaylist,
+                stats.Missing);
         }
 
         private User? GetUser(string? username = null)

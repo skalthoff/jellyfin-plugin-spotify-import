@@ -6,6 +6,7 @@ using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Library;
+using Viperinius.Plugin.SpotifyImport.Matchers;
 using Viperinius.Plugin.SpotifyImport.Utils;
 
 namespace Viperinius.Plugin.SpotifyImport.Sync
@@ -40,13 +41,11 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
 
             var matches = _dbRepository.GetProviderTrackMatch((long)trackId);
             var match = matches.FirstOrDefault(
-                potentialMatch =>
-                {
-                    // check if the cached match has compatible match level and criteria (meaning same or stricter requirements)
-                    var isLevelApplicable = potentialMatch?.Level <= Plugin.Instance.Configuration.ItemMatchLevel;
-                    var isCritApplicable = (potentialMatch?.Criteria & Plugin.Instance.Configuration.ItemMatchCriteria) == Plugin.Instance.Configuration.ItemMatchCriteria;
-                    return isLevelApplicable && isCritApplicable;
-                },
+                potentialMatch => potentialMatch != null && MatchCompatibility.IsApplicable(
+                    potentialMatch.Level,
+                    potentialMatch.Criteria,
+                    Plugin.Instance.Configuration.ItemMatchLevel,
+                    Plugin.Instance.Configuration.ItemMatchCriteria),
                 null);
 
             if (match != null)
