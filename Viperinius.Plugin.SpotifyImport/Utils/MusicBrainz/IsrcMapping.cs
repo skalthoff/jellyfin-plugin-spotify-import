@@ -39,33 +39,60 @@ namespace Viperinius.Plugin.SpotifyImport.Utils.MusicBrainz
             // query db for items without mb ids and lastcheck over x days ago
             var existingUnfinishedEntries = _dbRepository.GetIsrcMusicBrainzMapping(hasAnyMbIdsSet: false, maxLastCheck: retryCheckDate, returnMbIdLists: false).ToList();
             var newDoneIsrcs = new HashSet<string>();
+            var mbQuerySucceeded = true;
 
-            await foreach (var release in _musicBrainzHelper.QueryByIsrc(isrcs, cancellationToken ?? CancellationToken.None).ConfigureAwait(false))
+            try
             {
-                if (!isrcs.Contains(release.Isrc) || existingDoneEntries.Contains(release))
+                await foreach (var release in _musicBrainzHelper.QueryByIsrc(isrcs, cancellationToken ?? CancellationToken.None).ConfigureAwait(false))
                 {
-                    continue;
+                    if (!isrcs.Contains(release.Isrc) || existingDoneEntries.Contains(release))
+                    {
+                        continue;
+                    }
+
+                    _dbRepository.DeleteIsrcMusicBrainzMapping(existingUnfinishedEntries.Where(e => e.Isrc == release.Isrc).Select(m => m.Id).ToList());
+
+                    if (_dbRepository.UpsertIsrcMusicBrainzMapping(release) == null)
+                    {
+                        _logger.LogWarning("Failed to save ISRC<->MusicBrainz mapping to DB for ISRC {Isrc}", release.Isrc);
+                    }
+
+                    newDoneIsrcs.Add(release.Isrc);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // user / scheduler cancellation must always propagate so the task aborts cleanly
+                throw;
+            }
+            catch (Exception ex)
+            {
+                if (cancellationToken?.IsCancellationRequested ?? false)
+                {
+                    throw;
                 }
 
-                _dbRepository.DeleteIsrcMusicBrainzMapping(existingUnfinishedEntries.Where(e => e.Isrc == release.Isrc).Select(m => m.Id).ToList());
-
-                if (_dbRepository.UpsertIsrcMusicBrainzMapping(release) == null)
-                {
-                    _logger.LogWarning("Failed to save ISRC<->MusicBrainz mapping to DB for ISRC {Isrc}", release.Isrc);
-                }
-
-                newDoneIsrcs.Add(release.Isrc);
+                // A transient MusicBrainz failure (outage, rate limiting, network drop) must not abort the whole
+                // import: keep any mappings already resolved in this run and let the sync continue against the
+                // existing cache. Crucially, do NOT fall through to the placeholder loop below - writing "not found"
+                // placeholders for ISRCs we never actually got to query would suppress their retries for the whole
+                // retry window.
+                _logger.LogWarning(ex, "Failed to query MusicBrainz for ISRC mappings; skipping the MusicBrainz update for this run and continuing with the existing cache");
+                mbQuerySucceeded = false;
             }
 
-            foreach (var notFoundIsrc in isrcs.Except(newDoneIsrcs))
+            if (mbQuerySucceeded)
             {
-                // delete any previous placeholders for this isrc
-                _dbRepository.DeleteIsrcMusicBrainzMapping(existingUnfinishedEntries.Where(e => e.Isrc == notFoundIsrc).Select(m => m.Id).ToList());
-
-                // insert placeholder
-                if (_dbRepository.UpsertIsrcMusicBrainzMapping(new DbIsrcMusicBrainzMapping(-1, notFoundIsrc, checkedAt, new List<Guid>(), new List<Guid>(), new List<Guid>(), new List<Guid>())) == null)
+                foreach (var notFoundIsrc in isrcs.Except(newDoneIsrcs))
                 {
-                    _logger.LogWarning("Failed to save placeholder ISRC<->MusicBrainz mapping to DB for ISRC {Isrc}", notFoundIsrc);
+                    // delete any previous placeholders for this isrc
+                    _dbRepository.DeleteIsrcMusicBrainzMapping(existingUnfinishedEntries.Where(e => e.Isrc == notFoundIsrc).Select(m => m.Id).ToList());
+
+                    // insert placeholder
+                    if (_dbRepository.UpsertIsrcMusicBrainzMapping(new DbIsrcMusicBrainzMapping(-1, notFoundIsrc, checkedAt, new List<Guid>(), new List<Guid>(), new List<Guid>(), new List<Guid>())) == null)
+                    {
+                        _logger.LogWarning("Failed to save placeholder ISRC<->MusicBrainz mapping to DB for ISRC {Isrc}", notFoundIsrc);
+                    }
                 }
             }
         }
