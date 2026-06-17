@@ -83,7 +83,7 @@ namespace Viperinius.Plugin.SpotifyImport.Tasks
                 }
             }
 
-            if (followedUsers.Length == 0 && playlistIds.Count == 0)
+            if (followedUsers.Length == 0 && playlistIds.Count == 0 && playlistIdsAlt.Count == 0)
             {
                 return;
             }
@@ -107,10 +107,7 @@ namespace Viperinius.Plugin.SpotifyImport.Tasks
             {
                 foreach (var user in followedUsers)
                 {
-                    // get playlists created / shared with user
-                    var userPlaylists = await spotify.GetUserPlaylistIds(user, cancellationToken).ConfigureAwait(false) ?? new List<string>();
-                    // get playlists owned by spotify
-                    userPlaylists.AddRange(await spotifyAlt.GetUserPlaylistIds(user, cancellationToken).ConfigureAwait(false) ?? new List<string>());
+                    var userPlaylists = await spotifyAlt.GetUserPlaylistIds(user, cancellationToken).ConfigureAwait(false) ?? new List<string>();
 
                     userPlaylists.ForEach(id =>
                     {

@@ -2,7 +2,7 @@
 name: "Spotify Import"
 guid: "F03D0ADB-289F-4986-BD6F-2468025249B3"
 imageUrl: "https://github.com/Viperinius/jellyfin-plugin-spotify-import/raw/master/viperinius-plugin-spotifyimport.png"
-version: "1.17.0.0"
+version: "1.18.0.0"
 targetAbi: "10.12.0.0"
 framework: "net10.0"
 overview: "This plugin imports playlists from Spotify."
@@ -28,6 +28,21 @@ artifacts:
 #- "MetaBrainz.MusicBrainz.dll"  #
 changelog: |2-
   # Changelog
+
+  ## [1.18.0.0] - 2026-06-17
+
+  ### Added
+
+  - Merged upstream Viperinius 1.17.0.0 - 1.17.3.0 (reworked Spotify integration) onto the porcupine (Jellyfin 10.12 / net10) line
+
+  ### Changed
+
+  - Rework API interactions for the 2026 Spotify Web API changes (playlist items endpoint rename GET /playlists/{id}/tracks -> /items, updated pathfinder GraphQL surface) and bump SpotifyAPI.Web 7.2.1 -> 7.4.2 (see #79)
+
+  ### Fixed
+
+  - Use a playlist track's Item field when the Track field is not set, so tracks are no longer dropped
+  - Do not skip the import run when only Spotify-owned playlists are configured (see #86)
 
   ## [1.17.0.0] - 2026-06-17
 
