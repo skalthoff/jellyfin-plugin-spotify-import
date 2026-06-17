@@ -2,7 +2,7 @@
 name: "Spotify Import"
 guid: "F03D0ADB-289F-4986-BD6F-2468025249B3"
 imageUrl: "https://github.com/Viperinius/jellyfin-plugin-spotify-import/raw/master/viperinius-plugin-spotifyimport.png"
-version: "1.16.0.2"
+version: "1.17.0.0"
 targetAbi: "10.12.0.0"
 framework: "net10.0"
 overview: "This plugin imports playlists from Spotify."
@@ -28,6 +28,21 @@ artifacts:
 #- "MetaBrainz.MusicBrainz.dll"  #
 changelog: |2-
   # Changelog
+
+  ## [1.17.0.0] - 2026-06-17
+
+  ### Added
+
+  - Reuse an already-resolved match across different Spotify tracks that share the same ISRC (re-validated against the configured match criteria), so the same recording is not resolved from scratch for every playlist it appears in
+  - Per-run match summary in the logs: counts of cache / manual map / ISRC reuse / MusicBrainz / string matches, plus newly added, already present and missing tracks
+
+  ### Changed
+
+  - Performance: MusicBrainz / ISRC matching now resolves against a single in-memory index built once per sync instead of issuing a separate library query per MusicBrainz id for every track
+
+  ### Fixed
+
+  - A transient MusicBrainz outage (or rate limiting) no longer aborts the whole import; mappings already resolved in the run are kept and the sync continues against the existing cache
 
   ## [1.16.0.2] - 2026-06-16
 
