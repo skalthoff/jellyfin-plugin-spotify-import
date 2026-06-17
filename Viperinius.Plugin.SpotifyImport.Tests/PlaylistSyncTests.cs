@@ -837,5 +837,54 @@ namespace Viperinius.Plugin.SpotifyImport.Tests
             Assert.Equal(1, stats.Missing);
             Assert.Equal(2, stats.Matched);
         }
+
+        [Fact]
+        public async Task GetMatchingTrackReusesAcrossIsrcAndWritesForwardRow()
+        {
+            TrackHelper.SetValidPluginInstance();
+
+            const string providerName = "Spotify";
+            var resolvedGuid = Guid.NewGuid();
+            var trackA = new ProviderTrackInfo { Id = "a", Name = "Song", IsrcId = "ISRCX" };
+            var trackB = new ProviderTrackInfo { Id = "b", Name = "Song", IsrcId = "ISRCX" };
+
+            var loggerMock = Substitute.For<ILogger<PlaylistSync>>();
+            var plManagerMock = Substitute.For<MediaBrowser.Controller.Playlists.IPlaylistManager>();
+            var userManagerMock = Substitute.For<MediaBrowser.Controller.Library.IUserManager>();
+            var libManagerMock = Substitute.For<MediaBrowser.Controller.Library.ILibraryManager>();
+            SetUpLibManagerMock(libManagerMock, (MediaBrowser.Controller.Entities.BaseItem?)null);
+            libManagerMock
+                .GetItemById<Audio>(Arg.Any<Guid>())
+                .Returns(info => new Audio { Id = info.ArgAt<Guid>(0), Name = "Song" });
+
+            using var db = new DbRepository(":memory:");
+            db.InitDb();
+            var dbA = (long)db.InsertProviderTrack(providerName, trackA)!;
+            var dbB = (long)db.InsertProviderTrack(providerName, trackB)!;
+            // only track A has a resolved match; B shares its ISRC
+            db.InsertProviderTrackMatch(dbA, resolvedGuid.ToString(), Plugin.Instance!.Configuration.ItemMatchLevel, Plugin.Instance!.Configuration.ItemMatchCriteria);
+
+            var wrapper = new PlaylistSyncWrapper(
+                loggerMock,
+                plManagerMock,
+                libManagerMock,
+                userManagerMock,
+                new List<ProviderPlaylistInfo>(),
+                new Dictionary<string, string>(),
+                new ManualMapStore(Substitute.For<ILogger<ManualMapStore>>()),
+                db);
+
+            // B has no direct cache row yet
+            Assert.Empty(db.GetProviderTrackMatch(dbB));
+
+            var (match, _) = await wrapper.WrapGetMatchingTrackAsync(providerName, trackB);
+            Assert.NotNull(match);
+            Assert.Equal(resolvedGuid, match.Id);
+
+            // a forward match row was written for B so the next sync resolves it from the direct cache
+            var forward = db.GetProviderTrackMatch(dbB).ToList();
+            Assert.Single(forward);
+            Assert.Equal(resolvedGuid, forward[0].MatchId);
+        }
     }
 }
