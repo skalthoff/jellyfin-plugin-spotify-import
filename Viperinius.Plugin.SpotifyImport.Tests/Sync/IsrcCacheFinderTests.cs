@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
+using Viperinius.Plugin.SpotifyImport.Matchers;
 using Viperinius.Plugin.SpotifyImport.Sync;
 using Viperinius.Plugin.SpotifyImport.Tests.Db;
 using Viperinius.Plugin.SpotifyImport.Tests.TestHelpers;
@@ -13,6 +14,14 @@ namespace Viperinius.Plugin.SpotifyImport.Tests.Sync
     public class IsrcCacheFinderTests
     {
         private const string ProviderName = "Spotify";
+
+        // Plugin.Instance.Configuration is a shared singleton mutated by other test classes; pin the matching
+        // config explicitly so these tests do not depend on whatever the previously run test left behind.
+        private static void UseDefaultMatching()
+        {
+            Plugin.Instance!.Configuration.ItemMatchLevel = ItemMatchLevel.Default;
+            Plugin.Instance!.Configuration.ItemMatchCriteriaRaw = (int)(ItemMatchCriteria.TrackName | ItemMatchCriteria.AlbumName | ItemMatchCriteria.Artists | ItemMatchCriteria.AlbumArtists);
+        }
 
         private static ProviderTrackInfo MakeTrack(string id, string name, string isrc) => new()
         {
@@ -47,6 +56,7 @@ namespace Viperinius.Plugin.SpotifyImport.Tests.Sync
         public async Task ReusesMatchFromTrackSharingIsrc()
         {
             TrackHelper.SetValidPluginInstance();
+            UseDefaultMatching();
 
             var resolvedGuid = Guid.NewGuid();
             var trackA = MakeTrack("a", "Song", "ISRCX");
@@ -74,6 +84,7 @@ namespace Viperinius.Plugin.SpotifyImport.Tests.Sync
         public async Task DoesNotReuseWhenNameDoesNotMatch()
         {
             TrackHelper.SetValidPluginInstance();
+            UseDefaultMatching();
 
             var resolvedGuid = Guid.NewGuid();
             var trackA = MakeTrack("a", "Song", "ISRCX");
@@ -101,7 +112,7 @@ namespace Viperinius.Plugin.SpotifyImport.Tests.Sync
         public async Task DoesNotReuseWhenConfiguredAlbumDoesNotMatch()
         {
             TrackHelper.SetValidPluginInstance();
-            // default config enforces AlbumName among the criteria
+            UseDefaultMatching(); // default config enforces AlbumName among the criteria
 
             var resolvedGuid = Guid.NewGuid();
             var trackA = MakeTrack("a", "Song", "ISRCX");
