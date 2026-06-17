@@ -33,6 +33,7 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
 
         private readonly CacheFinder _cacheFinder;
         private readonly ManualMapFinder _manualMapFinder;
+        private readonly IsrcCacheFinder _isrcCacheFinder;
         private readonly MusicBrainzFinder _musicBrainzFinder;
         private readonly StringMatchFinder _stringMatchFinder;
 
@@ -57,6 +58,7 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
 
             _cacheFinder = new CacheFinder(_libraryManager, _dbRepository);
             _manualMapFinder = new ManualMapFinder(_libraryManager, _manualMapStore);
+            _isrcCacheFinder = new IsrcCacheFinder(_logger, _libraryManager, _dbRepository);
             _musicBrainzFinder = new MusicBrainzFinder(_libraryManager, _dbRepository);
             _stringMatchFinder = new StringMatchFinder(_logger, _libraryManager);
         }
@@ -291,6 +293,24 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
                 return (match, failedMatchCriterium);
             }
 
+            // 2.5 reuse a match already resolved for another provider track sharing this ISRC
+            match = await _isrcCacheFinder.FindTrackAsync(providerId, providerTrackInfo).ConfigureAwait(false);
+            if (match != null)
+            {
+                if (Plugin.Instance?.Configuration.EnableVerboseLogging ?? false)
+                {
+                    _logger.LogInformation("Reused match for track with id {Id} from another track sharing the same ISRC", match.Id);
+                }
+
+                if (stats != null)
+                {
+                    stats.IsrcReuseHits++;
+                }
+
+                SaveMatchInCache(providerId, providerTrackInfo, match.Id);
+                return (match, failedMatchCriterium);
+            }
+
             // 3. check by isrc
             match = await _musicBrainzFinder.FindTrackAsync(providerId, providerTrackInfo).ConfigureAwait(false);
             if (match != null)
@@ -487,12 +507,13 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
             // always logged (not gated behind verbose logging): a per-run summary explains how many tracks
             // matched and via which finder, without the noise of a line per track.
             _logger.LogInformation(
-                "Match summary for {Target}: {Matched}/{Total} matched (cache {CacheHits}, manual {ManualMapHits}, musicbrainz {MusicBrainzHits}, string {StringMatchHits}); {NewlyAdded} added, {AlreadyInPlaylist} already present, {Missing} missing",
+                "Match summary for {Target}: {Matched}/{Total} matched (cache {CacheHits}, manual {ManualMapHits}, isrc-reuse {IsrcReuseHits}, musicbrainz {MusicBrainzHits}, string {StringMatchHits}); {NewlyAdded} added, {AlreadyInPlaylist} already present, {Missing} missing",
                 label,
                 stats.Matched,
                 stats.TotalTracks,
                 stats.CacheHits,
                 stats.ManualMapHits,
+                stats.IsrcReuseHits,
                 stats.MusicBrainzHits,
                 stats.StringMatchHits,
                 stats.NewlyAdded,

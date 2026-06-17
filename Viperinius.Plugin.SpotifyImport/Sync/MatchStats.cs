@@ -23,6 +23,11 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
         public int ManualMapHits { get; set; }
 
         /// <summary>
+        /// Gets or sets the number of tracks resolved by reusing a match from another track sharing the same ISRC.
+        /// </summary>
+        public int IsrcReuseHits { get; set; }
+
+        /// <summary>
         /// Gets or sets the number of tracks resolved via the MusicBrainz / ISRC finder.
         /// </summary>
         public int MusicBrainzHits { get; set; }
@@ -50,7 +55,7 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
         /// <summary>
         /// Gets the total number of tracks that resolved to a library item, regardless of finder.
         /// </summary>
-        public int Matched => CacheHits + ManualMapHits + MusicBrainzHits + StringMatchHits;
+        public int Matched => CacheHits + ManualMapHits + IsrcReuseHits + MusicBrainzHits + StringMatchHits;
 
         /// <summary>
         /// Adds the counters of another instance into this one.
@@ -66,6 +71,7 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
             TotalTracks += other.TotalTracks;
             CacheHits += other.CacheHits;
             ManualMapHits += other.ManualMapHits;
+            IsrcReuseHits += other.IsrcReuseHits;
             MusicBrainzHits += other.MusicBrainzHits;
             StringMatchHits += other.StringMatchHits;
             AlreadyInPlaylist += other.AlreadyInPlaylist;

@@ -106,6 +106,7 @@ namespace Viperinius.Plugin.SpotifyImport.Utils
         private static readonly string[] _createIndexQueries = new[]
         {
             $"CREATE INDEX IF NOT EXISTS IX_{TableProviderTracksName}_Provider_Track ON {TableProviderTracksName} (ProviderId, TrackId)",
+            $"CREATE INDEX IF NOT EXISTS IX_{TableProviderTracksName}_IsrcId ON {TableProviderTracksName} (IsrcId)",
             $"CREATE INDEX IF NOT EXISTS IX_{TableProviderPlaylistsName}_Provider_Playlist ON {TableProviderPlaylistsName} (ProviderId, PlaylistId)",
             $"CREATE INDEX IF NOT EXISTS IX_{TableProviderTrackMatchesName}_TrackId ON {TableProviderTrackMatchesName} (TrackId)",
             $"CREATE INDEX IF NOT EXISTS IX_{TableProviderPlaylistTracksName}_PlaylistId ON {TableProviderPlaylistTracksName} (PlaylistId)",
@@ -405,6 +406,55 @@ namespace Viperinius.Plugin.SpotifyImport.Utils
             insertCmd.Parameters.AddWithValue("$MatchCriteria", (int)criteria);
 
             return (long?)insertCmd.ExecuteScalar();
+        }
+
+        /// <summary>
+        /// Finds cached matches that belong to a different provider track sharing the given ISRC.
+        /// Used to reuse an already-resolved match across tracks that point to the same recording.
+        /// </summary>
+        /// <param name="isrc">The ISRC to look up (compared verbatim against the stored value).</param>
+        /// <param name="excludeTrackDbId">The provider track db id to exclude (the track being resolved).</param>
+        /// <param name="maxLevel">The configured match level; only same-or-stricter cached matches qualify.</param>
+        /// <param name="requiredCriteria">The configured criteria; cached matches must satisfy at least these.</param>
+        /// <returns>Compatible matches ordered strictest first.</returns>
+        public IEnumerable<DbProviderTrackMatch> GetProviderTrackMatchesByIsrc(string? isrc, long excludeTrackDbId, ItemMatchLevel maxLevel, ItemMatchCriteria requiredCriteria)
+        {
+            if (string.IsNullOrWhiteSpace(isrc))
+            {
+                yield break;
+            }
+
+            using var selectCmd = Connection.CreateCommand();
+            var compatibility = MatchCompatibility.BuildSqlPredicate("m.MatchLevel", "m.MatchCriteria", "$MaxLevel", "$RequiredCriteria");
+            var sql = $@"SELECT m.Id, m.JellyfinMatchId, m.MatchLevel, m.MatchCriteria
+                FROM {TableProviderTrackMatchesName} m
+                INNER JOIN {TableProviderTracksName} t ON m.TrackId = t.Id
+                WHERE t.IsrcId = $Isrc AND t.Id <> $ExcludeTrackId AND {compatibility}
+                ORDER BY m.MatchLevel ASC, m.Id ASC";
+
+#pragma warning disable CA2100 // Review SQL queries for security vulnerabilities
+            selectCmd.CommandText = sql;
+#pragma warning restore CA2100 // Review SQL queries for security vulnerabilities
+            selectCmd.Parameters.AddWithValue("$Isrc", isrc);
+            selectCmd.Parameters.AddWithValue("$ExcludeTrackId", excludeTrackDbId);
+            selectCmd.Parameters.AddWithValue("$MaxLevel", (int)maxLevel);
+            selectCmd.Parameters.AddWithValue("$RequiredCriteria", (int)requiredCriteria);
+
+            using var reader = selectCmd.ExecuteReader();
+            while (reader.Read())
+            {
+                var id = reader.GetInt64(0);
+                var matchIdRaw = reader.GetString(1);
+                if (!Guid.TryParse(matchIdRaw, out var matchId))
+                {
+                    continue;
+                }
+
+                var level = (ItemMatchLevel)reader.GetInt32(2);
+                var criteria = (ItemMatchCriteria)reader.GetInt32(3);
+
+                yield return new DbProviderTrackMatch(id, matchId, level, criteria);
+            }
         }
 
         public IEnumerable<DbIsrcMusicBrainzMapping> GetIsrcMusicBrainzMapping(
