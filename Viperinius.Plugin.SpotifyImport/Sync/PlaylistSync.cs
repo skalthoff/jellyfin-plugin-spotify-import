@@ -63,6 +63,9 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
 
         public async Task Execute(IProgress<double> progress, CancellationToken cancellationToken = default)
         {
+            // bound the parens-split memoisation to this sync's working set
+            TrackComparison.ClearCache();
+
             var progressValue = 0d;
             var providerPlaylistCount = _providerPlaylists.Count;
             var providerPlaylistIndexProgress = 0;

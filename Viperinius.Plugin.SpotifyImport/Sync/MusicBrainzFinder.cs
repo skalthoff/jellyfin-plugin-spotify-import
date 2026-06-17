@@ -134,17 +134,8 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
 
             if (matchCandidates.Count > 0)
             {
-                // sort by prio first, then match level
-                matchCandidates.Sort((a, b) =>
-                {
-                    var result = a.Item1.CompareTo(b.Item1);
-                    if (result == 0)
-                    {
-                        result = a.Item2.CompareTo(b.Item2);
-                    }
-
-                    return result;
-                });
+                // sort by prio, then match level, then closeness to the provider track duration (tie-breaker)
+                matchCandidates.Sort((a, b) => TrackComparison.CompareMatchCandidates(a, b, providerTrackInfo));
                 return matchCandidates.First().Item3;
             }
 
@@ -156,6 +147,17 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
             var level = Plugin.Instance?.Configuration.ItemMatchLevel ?? ItemMatchLevel.Default;
             var checkResult = TrackComparison.TrackNameEqual(track, providerTrackInfo, level);
             if (!checkResult.ComparisonResult || checkResult.MatchedLevel == null || checkResult.MatchedPrio == null)
+            {
+                return null;
+            }
+
+            // optional hard gate: drop a candidate whose known duration is too far from the provider track
+            // (the ISRC->MB direct-hit path above is identity-based and intentionally left ungated)
+            if (TrackComparison.DurationExceedsLimit(
+                    track,
+                    providerTrackInfo,
+                    Plugin.Instance?.Configuration.EnableDurationLimit ?? false,
+                    Plugin.Instance?.Configuration.MaxDurationDifferenceSeconds ?? 0))
             {
                 return null;
             }

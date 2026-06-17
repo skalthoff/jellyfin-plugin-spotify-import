@@ -301,6 +301,9 @@ export default function (view) {
 
             document.querySelector('#ItemMatchLevel').value = config.ItemMatchLevel;
             document.querySelector('#FuzzyMaxDiff').value = config.MaxFuzzyCharDifference;
+            document.querySelector('#MinFuzzyMatchRatio').value = config.MinFuzzyMatchRatio;
+            document.querySelector('#EnableDurationLimit').checked = config.EnableDurationLimit;
+            document.querySelector('#MaxDurationDifference').value = config.MaxDurationDifferenceSeconds;
             mapItemMatchCriteriaToCheckboxes(config);
             document.querySelector('#UseLegacyMatching').checked = config.UseLegacyMatching;
             mapEnabledTrackMatchFindersToCheckboxes(config);
@@ -361,6 +364,9 @@ export default function (view) {
             config.KeepMissingTrackLists = document.querySelector('#KeepMissingTrackLists').checked;
             config.ItemMatchLevel = document.querySelector('#ItemMatchLevel').value;
             config.MaxFuzzyCharDifference = document.querySelector('#FuzzyMaxDiff').value;
+            config.MinFuzzyMatchRatio = document.querySelector('#MinFuzzyMatchRatio').value;
+            config.EnableDurationLimit = document.querySelector('#EnableDurationLimit').checked;
+            config.MaxDurationDifferenceSeconds = document.querySelector('#MaxDurationDifference').value;
             config.ItemMatchCriteriaRaw = getItemMatchCriteriaFromCheckboxes();
             if (config.ItemMatchCriteriaRaw == 0) {
                 Dashboard.alert('Could not save settings, please select at least one track match criterium.');

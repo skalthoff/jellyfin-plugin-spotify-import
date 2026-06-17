@@ -9,12 +9,15 @@ namespace Viperinius.Plugin.SpotifyImport.Matchers
 {
     internal partial class AlbumFromTrackMatcher : IItemMatcher<string>
     {
+        // stateless matcher: reuse one instance instead of allocating a new IgnoreParensMatcher on every comparison
+        private static readonly IgnoreParensMatcher _parensMatcher = new IgnoreParensMatcher();
+
         public bool IsStrict => false;
 
         public bool Matches(string target, string item)
         {
             var i = TheRegex().Replace(item, string.Empty);
-            return new IgnoreParensMatcher().Matches(target, i);
+            return _parensMatcher.Matches(target, i);
         }
 
         public static bool TryGetAlbumNameFromTrack(string item, out string album)

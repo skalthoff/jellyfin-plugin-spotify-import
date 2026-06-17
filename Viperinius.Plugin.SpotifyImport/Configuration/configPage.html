@@ -186,15 +186,37 @@
                                 <option value="IgnoreParensPunctuationAndCase">Ignore Case + Punctuation + Parentheses Content</option>
                                 <option value="IgnoreParensPunctuationAndCaseUseAlbumFromTrack">Ignore Case + Punctuation + Parentheses Content + Album From Track</option>
                                 <option value="Fuzzy">Fuzzy Check</option>
+                                <option value="IgnoreMusicNoise">Fuzzy Check + Ignore Featuring / Remaster / Part Tags</option>
                             </select>
                             <div class="fieldDescription">
                                 Choose how strict the comparison between Spotify and Jellyfin tracks is.
                             </div>
                         </div>
                         <div class="inputContainer">
-                            <input id="FuzzyMaxDiff" type="text" is="emby-input" type="number" pattern="[0-9]+" min="0" label="Max. Accepted Character Differences In Match" />
+                            <input id="FuzzyMaxDiff" type="text" is="emby-input" type="number" pattern="[0-9]+" min="0" label="Max. Accepted Character Differences In Match (short titles)" />
                             <div class="fieldDescription">
-                                Only important if <b>Match Type</b> is set to <b>Fuzzy Check</b>
+                                Only important if <b>Match Type</b> is set to <b>Fuzzy Check</b> (or stricter fuzzy options). Applies to short titles only.
+                            </div>
+                        </div>
+                        <div class="inputContainer">
+                            <input id="MinFuzzyMatchRatio" type="number" is="emby-input" step="0.01" min="0" max="1" label="Min. Fuzzy Similarity Ratio (longer titles)" />
+                            <div class="fieldDescription">
+                                Only important if <b>Match Type</b> is set to <b>Fuzzy Check</b> (or stricter fuzzy options). A value between 0 and 1 (e.g. 0.85); higher is stricter. Tolerance scales with title length instead of a fixed character count.
+                            </div>
+                        </div>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
+                                <input id="EnableDurationLimit" name="EnableDurationLimit" type="checkbox" is="emby-checkbox" />
+                                <span>Reject matches with a very different track length.</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Track length is always used to break ties between otherwise equal matches. Enable this to additionally reject any match whose length differs from the Spotify track by more than the value below. Tracks without a known length are never rejected.
+                            </div>
+                        </div>
+                        <div class="inputContainer">
+                            <input id="MaxDurationDifference" type="number" is="emby-input" pattern="[0-9]+" min="0" label="Max. Accepted Track Length Difference (seconds)" />
+                            <div class="fieldDescription">
+                                Only important if <b>Reject matches with a very different track length</b> is enabled.
                             </div>
                         </div>
                         <div class="multiCheckboxContainer">

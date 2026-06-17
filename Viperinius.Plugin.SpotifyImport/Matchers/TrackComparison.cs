@@ -16,16 +16,37 @@ namespace Viperinius.Plugin.SpotifyImport.Matchers
         private static readonly IgnoreParensMatcher _parensMatcher = new IgnoreParensMatcher();
         private static readonly AlbumFromTrackMatcher _albumFromTrackMatcher = new AlbumFromTrackMatcher();
         private static readonly FuzzyMatcher _fuzzyMatcher = new FuzzyMatcher();
+        private static readonly MusicNoiseMatcher _musicNoiseMatcher = new MusicNoiseMatcher();
 
         private static readonly Regex _parensRegex = new Regex(@"\s*[\(\[]([^\)\]]*)[\)\]]\s*$"); // find *last* occurence of (foo) or [foo]
 
+        // TrySplitParensContents is a pure function of its input string, but the same provider/jellyfin name is split
+        // repeatedly across every candidate in an album (and every album of an artist). Memoise it so the work is done
+        // once per distinct string per sync. The cached SortedDictionary is treated as immutable by all callers (Equal
+        // only enumerates it); ClearCache() bounds the cache to a single sync's working set.
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, SortedDictionary<int, List<string>>> _splitCache = new(StringComparer.Ordinal);
+
+        /// <summary>
+        /// Clears the per-sync parens-split memoisation cache. Call once at the start of a sync run.
+        /// </summary>
+        public static void ClearCache()
+        {
+            _splitCache.Clear();
+        }
+
         private static SortedDictionary<int, List<string>> TrySplitParensContents(string? raw)
         {
-            var results = new SortedDictionary<int, List<string>>();
             if (string.IsNullOrWhiteSpace(raw))
             {
-                return results;
+                return new SortedDictionary<int, List<string>>();
             }
+
+            return _splitCache.GetOrAdd(raw, BuildParensSplit);
+        }
+
+        private static SortedDictionary<int, List<string>> BuildParensSplit(string raw)
+        {
+            var results = new SortedDictionary<int, List<string>>();
 
             var contentPrio = 1;
 
@@ -137,6 +158,12 @@ namespace Viperinius.Plugin.SpotifyImport.Matchers
                                 resultLevel = result ? ItemMatchLevel.Fuzzy : null;
                             }
 
+                            if (!result && matchLevel >= ItemMatchLevel.IgnoreMusicNoise)
+                            {
+                                result |= _musicNoiseMatcher.Matches(jellyfinCandidate, providerCandidate);
+                                resultLevel = result ? ItemMatchLevel.IgnoreMusicNoise : null;
+                            }
+
                             thisResult.ComparisonResult |= result;
                             if (thisResult.MatchedLevel == null || thisResult.MatchedLevel > resultLevel)
                             {
@@ -239,6 +266,103 @@ namespace Viperinius.Plugin.SpotifyImport.Matchers
         {
             var correctedMatchLevel = matchLevel >= ItemMatchLevel.Fuzzy ? ItemMatchLevel.IgnoreParensPunctuationAndCase : matchLevel;
             return ListMatchOneItem(new List<string> { jfItem.Name }, providerItem.ArtistNames, correctedMatchLevel);
+        }
+
+        /// <summary>
+        /// Returns the absolute difference in milliseconds between a Jellyfin item's runtime and the provider
+        /// track's duration, or <c>null</c> if either side is unknown. Callers must treat <c>null</c> as
+        /// "duration cannot be used here" (do not gate, sort last) — never as a match or mismatch.
+        /// </summary>
+        /// <param name="jfItem">The Jellyfin item.</param>
+        /// <param name="providerItem">The provider track.</param>
+        /// <returns>The absolute duration delta in milliseconds, or null if unknown.</returns>
+        public static long? DurationDeltaMs(Audio jfItem, ProviderTrackInfo providerItem)
+        {
+            var providerMs = providerItem.DurationMs;
+            if (providerMs == null || providerMs <= 0)
+            {
+                return null;
+            }
+
+            var jfTicks = jfItem.RunTimeTicks;
+            if (jfTicks == null || jfTicks <= 0)
+            {
+                return null;
+            }
+
+            var jfMs = jfTicks.Value / TimeSpan.TicksPerMillisecond;
+            return Math.Abs(jfMs - providerMs.Value);
+        }
+
+        /// <summary>
+        /// Orders match candidates by match priority, then match level, then closeness to the provider track's
+        /// duration. Candidates whose duration delta is unknown keep their (prio, level) ranking and sort after
+        /// otherwise-equal candidates that have a known, closer duration; they are never removed.
+        /// </summary>
+        /// <param name="a">First candidate.</param>
+        /// <param name="b">Second candidate.</param>
+        /// <param name="providerItem">The provider track being matched.</param>
+        /// <returns>A signed comparison result.</returns>
+        public static int CompareMatchCandidates(
+            (int Prio, ItemMatchLevel Level, Audio Item) a,
+            (int Prio, ItemMatchLevel Level, Audio Item) b,
+            ProviderTrackInfo providerItem)
+        {
+            var result = a.Prio.CompareTo(b.Prio);
+            if (result != 0)
+            {
+                return result;
+            }
+
+            result = a.Level.CompareTo(b.Level);
+            if (result != 0)
+            {
+                return result;
+            }
+
+            var deltaA = DurationDeltaMs(a.Item, providerItem);
+            var deltaB = DurationDeltaMs(b.Item, providerItem);
+            if (deltaA == null && deltaB == null)
+            {
+                return 0;
+            }
+
+            if (deltaA == null)
+            {
+                return 1;
+            }
+
+            if (deltaB == null)
+            {
+                return -1;
+            }
+
+            return deltaA.Value.CompareTo(deltaB.Value);
+        }
+
+        /// <summary>
+        /// Returns true if the duration limit is enabled and the candidate's <em>known</em> duration delta exceeds
+        /// the configured maximum. A candidate with an unknown duration is never rejected.
+        /// </summary>
+        /// <param name="jfItem">The Jellyfin item.</param>
+        /// <param name="providerItem">The provider track.</param>
+        /// <param name="enabled">Whether the hard duration limit is enabled.</param>
+        /// <param name="maxSeconds">The maximum acceptable duration difference in seconds.</param>
+        /// <returns>True if the candidate should be rejected on duration grounds.</returns>
+        public static bool DurationExceedsLimit(Audio jfItem, ProviderTrackInfo providerItem, bool enabled, int maxSeconds)
+        {
+            if (!enabled)
+            {
+                return false;
+            }
+
+            var delta = DurationDeltaMs(jfItem, providerItem);
+            if (delta == null)
+            {
+                return false;
+            }
+
+            return delta.Value > (long)maxSeconds * 1000L;
         }
 
         public class Result

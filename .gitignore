@@ -6,3 +6,4 @@ artifacts
 jellyfin_srv_*/
 test_library_scripts/*.mp3
 __pycache__/
+TestResults/

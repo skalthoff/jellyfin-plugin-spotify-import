@@ -444,6 +444,17 @@ namespace Viperinius.Plugin.SpotifyImport.Spotify
                     trackNum = jsonTrackNum.GetUInt32();
                 }
 
+                // duration is optional in this GraphQL payload; parse defensively and leave null if absent
+                long? durationMs = null;
+                if (jsonData.TryGetProperty("duration", out var jsonDuration) &&
+                    jsonDuration.TryGetProperty("totalMilliseconds", out var jsonDurationMs) &&
+                    jsonDurationMs.ValueKind == JsonValueKind.Number &&
+                    jsonDurationMs.TryGetInt64(out var parsedDurationMs) &&
+                    parsedDurationMs > 0)
+                {
+                    durationMs = parsedDurationMs;
+                }
+
                 var albumName = string.Empty;
                 var albumArtists = new List<string>();
                 if (jsonData.TryGetProperty("albumOfTrack", out var jsonAlbum) &&
@@ -498,6 +509,7 @@ namespace Viperinius.Plugin.SpotifyImport.Spotify
                     AlbumArtistNames = albumArtists,
                     ArtistNames = artists,
                     TrackNumber = trackNum,
+                    DurationMs = durationMs,
                 };
             }
 

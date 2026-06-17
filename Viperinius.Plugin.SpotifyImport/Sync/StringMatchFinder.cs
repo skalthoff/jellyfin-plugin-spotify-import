@@ -14,6 +14,16 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
     {
         private const int MaxSearchChars = 5;
 
+        // The provably best-possible string match: TrySplitParensContents seeds contentPrio=1 for each side and Equal
+        // sums them, so (prio 2, level Default) is the floor under the (prio, level) sort comparator below — nothing
+        // can sort before it. Once a candidate hits it we can stop scanning the remaining artists/albums without
+        // changing which (prio, level) is returned.
+        private const int BestPossiblePrio = 2;
+
+        // When the provider supplies a duration, two exact-name candidates are ranked by duration closeness, so an
+        // exact-name hit is only truly unbeatable (safe to stop on) if its duration also matches near-exactly.
+        private const long PerfectDurationGraceMs = 2000;
+
         private readonly ILogger _logger;
         private readonly ILibraryManager _libraryManager;
 
@@ -21,6 +31,11 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
         // StringMatchFinder is constructed once per sync run, so these caches are naturally scoped to a single sync.
         private readonly Dictionary<string, IReadOnlyList<MediaBrowser.Controller.Entities.BaseItem>> _artistCandidatesCache = new(StringComparer.Ordinal);
         private readonly Dictionary<Guid, IReadOnlyList<MediaBrowser.Controller.Entities.BaseItem>> _artistAlbumsCache = new();
+
+        // MusicAlbum.Tracks calls Folder.GetRecursiveChildren on every access (db-backed, re-resolves each time), so
+        // multiple provider tracks resolving to the same album would re-query its track list repeatedly. Memoise per
+        // sync, keyed by album reference (album.Id can be empty/duplicated on transient instances).
+        private readonly Dictionary<MusicAlbum, IReadOnlyList<Audio>> _albumTracksCache = new(ReferenceEqualityComparer.Instance);
 
         public StringMatchFinder(
             ILogger logger,
@@ -49,9 +64,10 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
             LastFailedCriteria = ItemMatchCriteria.None;
             var matchCandidates = new List<(int, ItemMatchLevel, Audio)>();
 
+            var foundBestPossible = false;
             var artistProviderNextIndex = 0;
             var artistJfNextIndex = 0;
-            while (artistProviderNextIndex >= 0)
+            while (artistProviderNextIndex >= 0 && !foundBestPossible)
             {
                 var artist = GetArtist(providerTrackInfo, ref artistProviderNextIndex, ref artistJfNextIndex);
                 if (artist == null)
@@ -66,7 +82,7 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
                 }
 
                 var albumNextIndex = 0;
-                while (albumNextIndex >= 0)
+                while (albumNextIndex >= 0 && !foundBestPossible)
                 {
                     var album = GetAlbum(artist, providerTrackInfo, ref albumNextIndex);
                     if (album == null)
@@ -91,28 +107,26 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
                         _logger.LogInformation(">> Album artists ok");
                     }
 
-                    var tracks = GetTrack(album, providerTrackInfo);
+                    // materialise once: AddRange + the emptiness check would otherwise enumerate (and re-run every
+                    // TrackComparison in) this lazy sequence twice
+                    var tracks = GetTrack(album, providerTrackInfo).ToList();
                     matchCandidates.AddRange(tracks);
-                    if (!tracks.Any())
+                    if (tracks.Count == 0)
                     {
                         LastFailedCriteria |= ItemMatchCriteria.TrackName;
+                    }
+                    else if (tracks.Any(t => IsUnbeatableMatch(t, providerTrackInfo)))
+                    {
+                        // best-possible match found; no later candidate can sort before it, so stop scanning
+                        foundBestPossible = true;
                     }
                 }
             }
 
             if (matchCandidates.Count > 0)
             {
-                // sort by prio first, then match level
-                matchCandidates.Sort((a, b) =>
-                {
-                    var result = a.Item1.CompareTo(b.Item1);
-                    if (result == 0)
-                    {
-                        result = a.Item2.CompareTo(b.Item2);
-                    }
-
-                    return result;
-                });
+                // sort by prio, then match level, then closeness to the provider track duration (tie-breaker)
+                matchCandidates.Sort((a, b) => TrackComparison.CompareMatchCandidates(a, b, providerTrackInfo));
                 LastFailedCriteria = ItemMatchCriteria.None;
                 return matchCandidates.First().Item3;
             }
@@ -277,9 +291,43 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
             return album;
         }
 
+        private static bool IsUnbeatableMatch((int Prio, ItemMatchLevel Level, Audio Item) candidate, ProviderTrackInfo providerTrackInfo)
+        {
+            if (candidate.Prio != BestPossiblePrio || candidate.Level != ItemMatchLevel.Default)
+            {
+                return false;
+            }
+
+            // Exact-name match. With duration as a tie-breaker, only stop early if duration cannot improve the
+            // result: either the provider has no duration (tie-break inactive) or this candidate already matches
+            // it near-exactly. Otherwise keep scanning for a candidate with a closer duration.
+            if (providerTrackInfo.DurationMs == null || providerTrackInfo.DurationMs <= 0)
+            {
+                return true;
+            }
+
+            var delta = TrackComparison.DurationDeltaMs(candidate.Item, providerTrackInfo);
+            return delta != null && delta.Value <= PerfectDurationGraceMs;
+        }
+
+        private IReadOnlyList<Audio> GetAlbumTracks(MusicAlbum album)
+        {
+            if (!_albumTracksCache.TryGetValue(album, out var tracks))
+            {
+                // materialise once; MusicAlbum.Tracks re-resolves its children from the db on every enumeration
+                tracks = album.Tracks.ToList();
+                _albumTracksCache[album] = tracks;
+            }
+
+            return tracks;
+        }
+
         private IEnumerable<(int Prio, ItemMatchLevel Level, Audio Item)> GetTrack(MusicAlbum album, ProviderTrackInfo providerTrackInfo)
         {
-            foreach (var item in album.Tracks)
+            var enableDurationLimit = Plugin.Instance?.Configuration.EnableDurationLimit ?? false;
+            var maxDurationDiff = Plugin.Instance?.Configuration.MaxDurationDifferenceSeconds ?? 0;
+
+            foreach (var item in GetAlbumTracks(album))
             {
                 if (Plugin.Instance?.Configuration.EnableVerboseLogging ?? false)
                 {
@@ -309,6 +357,12 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
                             _logger.LogInformation(">>> Found matching potential track {Name} {Id}", item.Name, item.Id);
                         }
                     }
+                }
+
+                // optional hard gate: drop candidates whose known duration is too far from the provider track
+                if (TrackComparison.DurationExceedsLimit(item, providerTrackInfo, enableDurationLimit, maxDurationDiff))
+                {
+                    continue;
                 }
 
                 yield return (prio, level, item);

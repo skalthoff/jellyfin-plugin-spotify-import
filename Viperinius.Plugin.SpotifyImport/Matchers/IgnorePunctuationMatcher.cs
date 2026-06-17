@@ -5,6 +5,9 @@ namespace Viperinius.Plugin.SpotifyImport.Matchers
 {
     internal partial class IgnorePunctuationMatcher : IItemMatcher<string>
     {
+        // stateless matcher: reuse one instance instead of allocating a new CaseInsensitiveMatcher on every comparison
+        private static readonly CaseInsensitiveMatcher _caseInsensitiveMatcher = new CaseInsensitiveMatcher();
+
         public bool IsStrict => false;
 
         public bool Matches(string target, string item)
@@ -20,7 +23,7 @@ namespace Viperinius.Plugin.SpotifyImport.Matchers
             i = WhitespaceRegex().Replace(i, " ").RemoveDiacritics();
             t = WhitespaceRegex().Replace(t, " ").RemoveDiacritics();
 
-            return new CaseInsensitiveMatcher().Matches(t, i);
+            return _caseInsensitiveMatcher.Matches(t, i);
         }
 
         [GeneratedRegex(@"\p{P}")]

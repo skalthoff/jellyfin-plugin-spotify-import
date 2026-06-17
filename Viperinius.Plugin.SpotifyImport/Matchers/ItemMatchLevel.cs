@@ -41,5 +41,11 @@ namespace Viperinius.Plugin.SpotifyImport.Matchers
         /// Check if difference between strings within acceptable range.
         /// </summary>
         Fuzzy,
+
+        /// <summary>
+        /// Most permissive: additionally strips common "noise" tokens (featuring credits, remaster tags, "Pt."/"Part")
+        /// before comparing. Appended at the end so persisted configuration values are never renumbered.
+        /// </summary>
+        IgnoreMusicNoise,
     }
 }

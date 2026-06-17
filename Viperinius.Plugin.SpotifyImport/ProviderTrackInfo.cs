@@ -48,6 +48,13 @@ namespace Viperinius.Plugin.SpotifyImport
         public uint TrackNumber { get; set; }
 
         /// <summary>
+        /// Gets or sets the track duration in milliseconds, if known by the provider.
+        /// In-memory only (not persisted): used as a tie-breaker / optional gate during matching.
+        /// </summary>
+        [JsonIgnore]
+        public long? DurationMs { get; set; }
+
+        /// <summary>
         /// Gets or sets the album name.
         /// </summary>
         public string AlbumName { get; set; }

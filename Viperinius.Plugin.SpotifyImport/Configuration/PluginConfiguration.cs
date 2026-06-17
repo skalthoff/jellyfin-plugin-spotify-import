@@ -29,6 +29,8 @@ namespace Viperinius.Plugin.SpotifyImport.Configuration
             ItemMatchCriteriaRaw = (int)(ItemMatchCriteria.TrackName | ItemMatchCriteria.AlbumName | ItemMatchCriteria.AlbumArtists | ItemMatchCriteria.Artists);
             ItemMatchLevel = ItemMatchLevel.Default;
             MaxFuzzyCharDifference = 2;
+            MinFuzzyMatchRatio = 0.85;
+            MaxDurationDifferenceSeconds = 30;
             MissingTrackListsDateFormat = "yyyy-MM-dd_HH-mm";
         }
 
@@ -99,13 +101,33 @@ namespace Viperinius.Plugin.SpotifyImport.Configuration
 
         /// <summary>
         /// Gets or sets the maximum amount of character differences to be acceptable as fuzzy match.
+        /// Used for short titles (where a length-normalised ratio is unstable).
         /// </summary>
         public int MaxFuzzyCharDifference { get; set; }
+
+        /// <summary>
+        /// Gets or sets the minimum length-normalised similarity ratio (0..1) required for a fuzzy match of longer
+        /// titles. Higher is stricter; 1.0 requires an exact match. Defaults to 0.85.
+        /// </summary>
+        public double MinFuzzyMatchRatio { get; set; }
 
         /// <summary>
         /// Gets or sets a value indicating whether to enable the legacy way of comparing tracks.
         /// </summary>
         public bool UseLegacyMatching { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether to reject matches whose duration differs from the Spotify
+        /// track by more than <see cref="MaxDurationDifferenceSeconds"/>. Duration is always used as a tie-breaker
+        /// regardless of this flag; this only enables the additional hard rejection.
+        /// </summary>
+        public bool EnableDurationLimit { get; set; }
+
+        /// <summary>
+        /// Gets or sets the maximum acceptable difference (in seconds) between the Spotify track duration and a
+        /// candidate match when <see cref="EnableDurationLimit"/> is enabled.
+        /// </summary>
+        public int MaxDurationDifferenceSeconds { get; set; }
 
         /// <summary>
         /// Gets the enabled track match finders.
