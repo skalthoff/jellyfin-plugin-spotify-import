@@ -33,8 +33,9 @@ namespace Viperinius.Plugin.SpotifyImport.Matchers
         /// <returns>A parenthesised SQL boolean expression.</returns>
         internal static string BuildSqlPredicate(string levelColumn, string criteriaColumn, string levelParam, string criteriaParam)
         {
-            // mirrors IsApplicable in SQL. The parentheses around the bitwise AND are required: SQLite gives '&'
-            // lower precedence than '=', so without them "criteria & param = param" would parse as "criteria & (param = param)".
+            // mirrors IsApplicable in SQL. SQLite binds '&' tighter than '=', so "criteria & param = param" already
+            // groups as "(criteria & param) = param"; the parentheses are kept for clarity and to match the C#
+            // IsApplicable above, where they ARE required (C# gives '&' lower precedence than '==').
             return $"({levelColumn} <= {levelParam} AND ({criteriaColumn} & {criteriaParam}) = {criteriaParam})";
         }
     }

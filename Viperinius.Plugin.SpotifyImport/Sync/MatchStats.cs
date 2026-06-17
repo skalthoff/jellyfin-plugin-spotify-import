@@ -38,7 +38,8 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
         public int StringMatchHits { get; set; }
 
         /// <summary>
-        /// Gets or sets the number of tracks that were already present in the target playlist (a subset of <see cref="CacheHits"/>).
+        /// Gets or sets the number of tracks that resolved to an item already present in the target playlist
+        /// (whether via the cache short-circuit or any finder), and so were not added again.
         /// </summary>
         public int AlreadyInPlaylist { get; set; }
 

@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Threading.Tasks;
 using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Library;
@@ -40,11 +41,14 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
 
             var ownDbId = _dbRepository.GetProviderTrackDbId(providerId, providerTrackInfo.Id) ?? -1;
             var level = Plugin.Instance.Configuration.ItemMatchLevel;
+            var criteria = Plugin.Instance.Configuration.ItemMatchCriteria;
+
+            // materialise before touching the library manager so the sqlite reader/command are disposed first
             var candidates = _dbRepository.GetProviderTrackMatchesByIsrc(
                 providerTrackInfo.IsrcId,
                 ownDbId,
                 level,
-                Plugin.Instance.Configuration.ItemMatchCriteria);
+                criteria).ToList();
 
             foreach (var candidate in candidates)
             {
@@ -54,9 +58,11 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
                     continue;
                 }
 
-                // the ISRC identifies the recording, but still confirm the reused library item satisfies the
-                // configured name matching before accepting it (the soft safety net for cross-track reuse)
-                if (TrackComparison.TrackNameEqual(item, providerTrackInfo, level).ComparisonResult)
+                // the ISRC identifies the recording, but ISRCs are not perfectly unique in practice (re-issues,
+                // compilations, label data errors). Re-validate the reused item against the FULL configured
+                // criteria before accepting it, so cross-track reuse honours the user's configured strictness
+                // (e.g. an album mismatch is rejected and resolution falls through to the regular finders).
+                if (TrackCriteriaMatcher.Matches(item, providerTrackInfo, level, criteria, out _))
                 {
                     if (Plugin.Instance.Configuration.EnableVerboseLogging)
                     {

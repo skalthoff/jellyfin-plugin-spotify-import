@@ -29,8 +29,13 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
         private readonly Dictionary<string, List<Audio>> _trackIndex = new(StringComparer.Ordinal);
         private readonly Dictionary<string, List<Audio>> _releaseIndex = new(StringComparer.Ordinal);
         private readonly Dictionary<string, List<Audio>> _releaseGroupIndex = new(StringComparer.Ordinal);
-        private bool _indexBuilt;
-        private bool _indexUnavailable;
+
+        // A sync resolves tracks serially (PlaylistSync iterates playlists and tracks with foreach+await, no
+        // parallel fan-out), so a single thread builds and reads the index. The flags are still marked volatile
+        // so the lock-free fast-path read pairs with the build's writes (acquire/release): if track resolution
+        // is ever parallelised, a reader that observes _indexBuilt also observes the fully-populated dictionaries.
+        private volatile bool _indexBuilt;
+        private volatile bool _indexUnavailable;
 
         private bool? _anyLibraryUsesMusicBrainz;
 

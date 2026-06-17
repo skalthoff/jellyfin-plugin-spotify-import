@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
@@ -12,6 +13,25 @@ namespace Viperinius.Plugin.SpotifyImport.Tests.Sync
     public class IsrcCacheFinderTests
     {
         private const string ProviderName = "Spotify";
+
+        private static ProviderTrackInfo MakeTrack(string id, string name, string isrc) => new()
+        {
+            Id = id,
+            Name = name,
+            AlbumName = "Album",
+            ArtistNames = new List<string> { "Artist" },
+            AlbumArtistNames = new List<string> { "Artist" },
+            IsrcId = isrc,
+        };
+
+        private static MediaBrowser.Controller.Entities.Audio.Audio MakeLibraryAudio(Guid id, string name, string album) => new()
+        {
+            Id = id,
+            Name = name,
+            Album = album,
+            Artists = new[] { "Artist" },
+            AlbumArtists = new[] { "Artist" },
+        };
 
         [Fact]
         public void IsEnabledByDefault()
@@ -29,13 +49,13 @@ namespace Viperinius.Plugin.SpotifyImport.Tests.Sync
             TrackHelper.SetValidPluginInstance();
 
             var resolvedGuid = Guid.NewGuid();
-            var trackA = new ProviderTrackInfo { Id = "a", Name = "Song", IsrcId = "ISRCX" };
-            var trackB = new ProviderTrackInfo { Id = "b", Name = "Song", IsrcId = "ISRCX" };
+            var trackA = MakeTrack("a", "Song", "ISRCX");
+            var trackB = MakeTrack("b", "Song", "ISRCX");
 
             var libManagerMock = Substitute.For<MediaBrowser.Controller.Library.ILibraryManager>();
             libManagerMock
                 .GetItemById<MediaBrowser.Controller.Entities.Audio.Audio>(Arg.Any<Guid>())
-                .Returns(info => new MediaBrowser.Controller.Entities.Audio.Audio { Id = info.ArgAt<Guid>(0), Name = "Song" });
+                .Returns(info => MakeLibraryAudio(info.ArgAt<Guid>(0), "Song", "Album"));
 
             using var db = DbRepositoryWrapper.GetInstance();
             db.InitDb();
@@ -56,13 +76,13 @@ namespace Viperinius.Plugin.SpotifyImport.Tests.Sync
             TrackHelper.SetValidPluginInstance();
 
             var resolvedGuid = Guid.NewGuid();
-            var trackA = new ProviderTrackInfo { Id = "a", Name = "Song", IsrcId = "ISRCX" };
-            var trackB = new ProviderTrackInfo { Id = "b", Name = "Totally Different", IsrcId = "ISRCX" };
+            var trackA = MakeTrack("a", "Song", "ISRCX");
+            var trackB = MakeTrack("b", "Totally Different", "ISRCX");
 
             var libManagerMock = Substitute.For<MediaBrowser.Controller.Library.ILibraryManager>();
             libManagerMock
                 .GetItemById<MediaBrowser.Controller.Entities.Audio.Audio>(Arg.Any<Guid>())
-                .Returns(info => new MediaBrowser.Controller.Entities.Audio.Audio { Id = info.ArgAt<Guid>(0), Name = "Song" });
+                .Returns(info => MakeLibraryAudio(info.ArgAt<Guid>(0), "Song", "Album"));
 
             using var db = DbRepositoryWrapper.GetInstance();
             db.InitDb();
@@ -78,11 +98,40 @@ namespace Viperinius.Plugin.SpotifyImport.Tests.Sync
         }
 
         [Fact]
+        public async Task DoesNotReuseWhenConfiguredAlbumDoesNotMatch()
+        {
+            TrackHelper.SetValidPluginInstance();
+            // default config enforces AlbumName among the criteria
+
+            var resolvedGuid = Guid.NewGuid();
+            var trackA = MakeTrack("a", "Song", "ISRCX");
+            var trackB = MakeTrack("b", "Song", "ISRCX");
+            trackB.AlbumName = "A Different Album"; // same recording/ISRC, different album metadata
+
+            var libManagerMock = Substitute.For<MediaBrowser.Controller.Library.ILibraryManager>();
+            libManagerMock
+                .GetItemById<MediaBrowser.Controller.Entities.Audio.Audio>(Arg.Any<Guid>())
+                .Returns(info => MakeLibraryAudio(info.ArgAt<Guid>(0), "Song", "Album"));
+
+            using var db = DbRepositoryWrapper.GetInstance();
+            db.InitDb();
+            var dbA = (long)db.InsertProviderTrack(ProviderName, trackA)!;
+            db.InsertProviderTrack(ProviderName, trackB);
+            db.InsertProviderTrackMatch(dbA, resolvedGuid.ToString(), Plugin.Instance!.Configuration.ItemMatchLevel, Plugin.Instance!.Configuration.ItemMatchCriteria);
+
+            var finder = new IsrcCacheFinder(Substitute.For<ILogger>(), libManagerMock, db);
+            var result = await finder.FindTrackAsync(ProviderName, trackB);
+
+            // album is a configured criterion and the reused item's album does not match track B -> no reuse
+            Assert.Null(result);
+        }
+
+        [Fact]
         public async Task ReturnsNullWhenNoOtherTrackSharesIsrc()
         {
             TrackHelper.SetValidPluginInstance();
 
-            var trackB = new ProviderTrackInfo { Id = "b", Name = "Song", IsrcId = "ISRCX" };
+            var trackB = MakeTrack("b", "Song", "ISRCX");
 
             var libManagerMock = Substitute.For<MediaBrowser.Controller.Library.ILibraryManager>();
             using var db = DbRepositoryWrapper.GetInstance();
@@ -100,7 +149,7 @@ namespace Viperinius.Plugin.SpotifyImport.Tests.Sync
         {
             TrackHelper.SetValidPluginInstance();
 
-            var trackB = new ProviderTrackInfo { Id = "b", Name = "Song", IsrcId = null };
+            var trackB = MakeTrack("b", "Song", null!);
 
             var libManagerMock = Substitute.For<MediaBrowser.Controller.Library.ILibraryManager>();
             using var db = DbRepositoryWrapper.GetInstance();
