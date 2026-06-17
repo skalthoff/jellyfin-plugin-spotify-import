@@ -21,16 +21,34 @@ namespace Viperinius.Plugin.SpotifyImport.Tests.Utils
 
         public List<string> QueryByIsrcLastArgs { get; set; } = new List<string>();
 
+        // simulate a MusicBrainz failure: throw once this many mappings have been yielded (-1 = never throw)
+        public int ThrowAfterYields { get; set; } = -1;
+
+        // when throwing, raise an OperationCanceledException instead of a transient error
+        public bool ThrowOperationCanceled { get; set; }
+
         public async IAsyncEnumerable<DbIsrcMusicBrainzMapping> QueryByIsrc(IEnumerable<string> isrcs, [EnumeratorCancellation] CancellationToken cancellationToken)
         {
             QueryByIsrcLastArgs = isrcs.ToList();
 
+            var yielded = 0;
             foreach (var isrc in QueryByIsrcLastArgs)
             {
+                if (ThrowAfterYields >= 0 && yielded >= ThrowAfterYields)
+                {
+                    if (ThrowOperationCanceled)
+                    {
+                        throw new OperationCanceledException("Simulated cancellation");
+                    }
+
+                    throw new InvalidOperationException("Simulated MusicBrainz failure");
+                }
+
                 var result = ResultMappings.FirstOrDefault(m => m!.Isrc == isrc, null);
                 if (result != null)
                 {
                     yield return result;
+                    yielded++;
                 }
             }
 
@@ -546,6 +564,105 @@ namespace Viperinius.Plugin.SpotifyImport.Tests.Utils
                     Assert.NotNull(result);
                 }
             }
+        }
+
+        [Fact]
+        public async Task CanUpdateMappingsToleratesMusicBrainzOutage()
+        {
+            var loggerMock = Substitute.For<ILogger<IsrcMapping>>();
+            using var db = DbRepositoryWrapper.GetInstance();
+            db.InitDb();
+
+            var testData = SetupTestData();
+            // simulate a complete MusicBrainz outage: throw before any mapping is yielded
+            testData.MbHelper.ThrowAfterYields = 0;
+
+            var isrcMapping = new IsrcMapping(loggerMock, db, testData.MbHelper);
+
+            // the outage must NOT abort the import
+            await isrcMapping.UpdateIsrcMusicBrainzMappings(testData.Playlists);
+
+            // it should have attempted to query MusicBrainz...
+            Assert.NotEmpty(testData.MbHelper.QueryByIsrcLastArgs);
+
+            // ...but written nothing, especially no "not found" placeholders that would suppress future retries
+            using var cmd = db.WrappedConnection.CreateCommand();
+            cmd.CommandText = "SELECT COUNT(*) FROM IsrcMusicBrainzChecks";
+            Assert.Equal(0L, (long?)await cmd.ExecuteScalarAsync());
+
+            foreach (var isrc in testData.ValidIsrcs.Concat(testData.NonValidIsrcs))
+            {
+                Assert.Empty(db.GetIsrcMusicBrainzMapping(isrc));
+            }
+        }
+
+        [Fact]
+        public async Task CanUpdateMappingsPartialOutageKeepsResolvedAndSkipsPlaceholders()
+        {
+            var loggerMock = Substitute.For<ILogger<IsrcMapping>>();
+            using var db = DbRepositoryWrapper.GetInstance();
+            db.InitDb();
+
+            var testData = SetupTestData();
+            // yield exactly one resolved mapping, then fail
+            testData.MbHelper.ThrowAfterYields = 1;
+
+            var isrcMapping = new IsrcMapping(loggerMock, db, testData.MbHelper);
+            await isrcMapping.UpdateIsrcMusicBrainzMappings(testData.Playlists);
+
+            // exactly the one resolved mapping is persisted; no placeholders written for the rest
+            using var cmd = db.WrappedConnection.CreateCommand();
+            cmd.CommandText = "SELECT COUNT(*) FROM IsrcMusicBrainzChecks";
+            Assert.Equal(1L, (long?)await cmd.ExecuteScalarAsync());
+
+            // none of the never-queried ISRCs got a placeholder row
+            foreach (var isrc in testData.NonValidIsrcs)
+            {
+                Assert.Empty(db.GetIsrcMusicBrainzMapping(isrc));
+            }
+
+            // the single persisted row is a real mapping (has MusicBrainz ids), not a placeholder
+            var persisted = testData.ValidIsrcs
+                .Select(isrc => db.GetIsrcMusicBrainzMapping(isrc).ToList())
+                .Where(m => m.Count > 0)
+                .ToList();
+            Assert.Single(persisted);
+            Assert.NotEmpty(persisted[0][0].MusicBrainzRecordingIds);
+        }
+
+        [Fact]
+        public async Task CanUpdateMappingsCancellationPropagates()
+        {
+            var loggerMock = Substitute.For<ILogger<IsrcMapping>>();
+            using var db = DbRepositoryWrapper.GetInstance();
+            db.InitDb();
+
+            var testData = SetupTestData();
+            testData.MbHelper.ThrowAfterYields = 0;
+            testData.MbHelper.ThrowOperationCanceled = true;
+
+            var isrcMapping = new IsrcMapping(loggerMock, db, testData.MbHelper);
+
+            // cancellation must propagate, not be swallowed as a transient outage
+            await Assert.ThrowsAsync<OperationCanceledException>(
+                () => isrcMapping.UpdateIsrcMusicBrainzMappings(testData.Playlists));
+        }
+
+        [Fact]
+        public async Task CanUpdateMappingsRethrowsWhenTokenCancelled()
+        {
+            var loggerMock = Substitute.For<ILogger<IsrcMapping>>();
+            using var db = DbRepositoryWrapper.GetInstance();
+            db.InitDb();
+
+            var testData = SetupTestData();
+            // a transient-looking error raised while cancellation has been requested must still propagate
+            testData.MbHelper.ThrowAfterYields = 0;
+
+            var isrcMapping = new IsrcMapping(loggerMock, db, testData.MbHelper);
+
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => isrcMapping.UpdateIsrcMusicBrainzMappings(testData.Playlists, new CancellationToken(true)));
         }
     }
 }
