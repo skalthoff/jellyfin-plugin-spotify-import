@@ -6,3 +6,8 @@ artifacts
 jellyfin_srv_*/
 test_library_scripts/*.mp3
 __pycache__/
+porcupine-feed/
+dist/
+public/
+stage/
+artifacts.txt

@@ -1,26 +1,30 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>Viperinius.Plugin.SpotifyImport</RootNamespace>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <Nullable>enable</Nullable>
     <AnalysisMode>AllEnabledByDefault</AnalysisMode>
+    <!-- CA1873: new in the .NET 10 analyzer set. Verbose log calls here are already gated behind
+         explicit EnableVerboseLogging checks, so the "argument evaluated while logging disabled"
+         concern does not apply; suppress to keep TreatWarningsAsErrors clean on net10/porcupine. -->
+    <NoWarn>$(NoWarn);CA1873</NoWarn>
     <RunPostBuildEvent>OnBuildSuccess</RunPostBuildEvent>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <Configurations>Debug;Release;ReleaseNoTest</Configurations>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Fastenshtein" Version="1.0.11" />
-    <PackageReference Include="Jellyfin.Common" Version="10.11.0" />
-    <PackageReference Include="Jellyfin.Controller" Version="10.11.0" />
-    <PackageReference Include="Jellyfin.Data" Version="10.11.0" />
-    <PackageReference Include="Jellyfin.Extensions" Version="10.11.0" />
-    <PackageReference Include="Jellyfin.Model" Version="10.11.0" />
-    <PackageReference Include="Jellyfin.Naming" Version="10.11.0" />
+    <PackageReference Include="Jellyfin.Common" Version="10.12.0" />
+    <PackageReference Include="Jellyfin.Controller" Version="10.12.0" />
+    <PackageReference Include="Jellyfin.Data" Version="10.12.0" />
+    <PackageReference Include="Jellyfin.Extensions" Version="10.12.0" />
+    <PackageReference Include="Jellyfin.Model" Version="10.12.0" />
+    <PackageReference Include="Jellyfin.Naming" Version="10.12.0" />
     <PackageReference Include="JsonSchema.Net" Version="7.4.0" />
     <PackageReference Include="MetaBrainz.MusicBrainz" Version="6.1.0" />
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.10" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.5" />
     <PackageReference Include="Otp.NET" Version="1.4.0" />
   </ItemGroup>
   <ItemGroup>

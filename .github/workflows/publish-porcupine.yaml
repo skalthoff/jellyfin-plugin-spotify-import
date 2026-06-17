@@ -1,0 +1,209 @@
+name: '🦔 Publish Porcupine Plugin Repository'
+
+# Builds the plugin against the user's personal Jellyfin fork ("porcupine", 10.12.0 / net10)
+# and publishes a Jellyfin-compatible repository as a dedicated, rolling prerelease so it never
+# collides with master's 10.11 line. Add this URL in your porcupine Jellyfin
+# (Dashboard -> Plugins -> Repositories):
+#
+#   https://github.com/<owner>/<repo>/releases/download/porcupine/manifest.json
+#
+# porcupine's Jellyfin.* assemblies are not on nuget.org, so CI packs them from
+# skalthoff/jellyfin@porcupine into ./porcupine-feed (see nuget.config) before restore.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - porcupine
+    paths:
+      - 'build.yaml'
+      - 'nuget.config'
+      - 'Viperinius.Plugin.SpotifyImport/**'
+      - '.github/workflows/publish-porcupine.yaml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-porcupine
+  cancel-in-progress: false
+
+env:
+  PORCUPINE_REPO: skalthoff/jellyfin
+  PORCUPINE_REF: porcupine
+  JELLYFIN_PKG_VERSION: '10.12.0'   # must match the Jellyfin.* versions referenced in the plugin csproj
+  RELEASE_TAG: porcupine
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout plugin
+        uses: actions/checkout@v4
+
+      - name: Checkout porcupine (Jellyfin fork)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.PORCUPINE_REPO }}
+          ref: ${{ env.PORCUPINE_REF }}
+          path: porcupine-src
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Pack porcupine Jellyfin.* assemblies into local feed
+        run: |
+          set -euo pipefail
+          FEED="$GITHUB_WORKSPACE/porcupine-feed"
+          rm -rf "$FEED"; mkdir -p "$FEED"
+          cd porcupine-src
+          PROJECTS=(
+            "MediaBrowser.Model/MediaBrowser.Model.csproj"
+            "Emby.Naming/Emby.Naming.csproj"
+            "Jellyfin.Data/Jellyfin.Data.csproj"
+            "MediaBrowser.Common/MediaBrowser.Common.csproj"
+            "src/Jellyfin.Extensions/Jellyfin.Extensions.csproj"
+            "src/Jellyfin.Database/Jellyfin.Database.Implementations/Jellyfin.Database.Implementations.csproj"
+            "src/Jellyfin.MediaEncoding.Keyframes/Jellyfin.MediaEncoding.Keyframes.csproj"
+            "MediaBrowser.Controller/MediaBrowser.Controller.csproj"
+          )
+          for p in "${PROJECTS[@]}"; do
+            echo ">>> packing $p"
+            dotnet pack "$p" -c Release -o "$FEED" \
+              -p:Version=${{ env.JELLYFIN_PKG_VERSION }} -p:TreatWarningsAsErrors=false --nologo -v minimal
+          done
+          echo "feed packages:"; ls -1 "$FEED"/*.nupkg | xargs -n1 basename
+
+      - name: Read plugin metadata
+        id: meta
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet pyyaml
+          python3 - <<'PY'
+          import os, yaml
+          d = yaml.safe_load(open('build.yaml'))
+          fields = {
+              'name': d['name'], 'guid': d['guid'], 'version': str(d['version']),
+              'abi': d['targetAbi'], 'framework': d['framework'], 'owner': d.get('owner', ''),
+              'category': d.get('category', ''), 'overview': d.get('overview', ''),
+              'description': d.get('description', ''), 'image': d.get('imageUrl', '') or '',
+          }
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              for k, v in fields.items():
+                  out.write(f"{k}={str(v).strip()}\n")
+          with open('artifacts.txt', 'w') as a:
+              for art in d.get('artifacts', []):
+                  a.write(f"{art}\n")
+          PY
+
+      - name: Build plugin (Release, against porcupine feed)
+        run: |
+          dotnet build Viperinius.Plugin.SpotifyImport/Viperinius.Plugin.SpotifyImport.csproj \
+            -c Release -f "${{ steps.meta.outputs.framework }}" --nologo
+
+      - name: Assemble package
+        id: pkg
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.meta.outputs.version }}"
+          OUT="Viperinius.Plugin.SpotifyImport/bin/Release/${{ steps.meta.outputs.framework }}"
+          STAGE="stage"
+          ZIP="spotify_import_${VERSION}-porcupine.zip"
+
+          rm -rf "$STAGE" public
+          mkdir -p "$STAGE" public
+
+          while IFS= read -r artifact; do
+            [ -z "$artifact" ] && continue
+            cp "$OUT/$artifact" "$STAGE/"
+            echo "staged $artifact"
+          done < artifacts.txt
+
+          jq -n \
+            --arg guid "${{ steps.meta.outputs.guid }}" \
+            --arg name "${{ steps.meta.outputs.name }}" \
+            --arg overview "${{ steps.meta.outputs.overview }}" \
+            --arg description "${{ steps.meta.outputs.description }}" \
+            --arg owner "${{ steps.meta.outputs.owner }}" \
+            --arg category "${{ steps.meta.outputs.category }}" \
+            --arg version "$VERSION" \
+            --arg abi "${{ steps.meta.outputs.abi }}" \
+            --arg framework "${{ steps.meta.outputs.framework }}" \
+            '{category: $category, guid: $guid, name: $name, overview: $overview,
+              description: $description, owner: $owner, targetAbi: $abi,
+              framework: $framework, version: $version, status: "Active", autoUpdate: false}' \
+            > "$STAGE/meta.json"
+
+          ( cd "$STAGE" && zip -qr "../public/$ZIP" . )
+
+          CHECKSUM="$(md5sum "public/$ZIP" | cut -d' ' -f1)"
+          TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          SOURCE_URL="${{ github.server_url }}/${{ github.repository }}/releases/download/${{ env.RELEASE_TAG }}/${ZIP}"
+
+          {
+            echo "zip=$ZIP"
+            echo "checksum=$CHECKSUM"
+            echo "timestamp=$TIMESTAMP"
+            echo "source_url=$SOURCE_URL"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build repository manifest
+        run: |
+          set -euo pipefail
+          CHANGELOG="Porcupine build (Jellyfin 10.12 / net10): performance changes (SQLite indexes, batched write transactions, WAL, memoized library queries) plus retarget to the porcupine fork. Matching behavior unchanged."
+          jq -n \
+            --arg guid "${{ steps.meta.outputs.guid }}" \
+            --arg name "${{ steps.meta.outputs.name }}" \
+            --arg description "${{ steps.meta.outputs.description }}" \
+            --arg overview "${{ steps.meta.outputs.overview }}" \
+            --arg owner "${{ steps.meta.outputs.owner }}" \
+            --arg category "${{ steps.meta.outputs.category }}" \
+            --arg image "${{ steps.meta.outputs.image }}" \
+            --arg version "${{ steps.meta.outputs.version }}" \
+            --arg abi "${{ steps.meta.outputs.abi }}" \
+            --arg changelog "$CHANGELOG" \
+            --arg sourceUrl "${{ steps.pkg.outputs.source_url }}" \
+            --arg checksum "${{ steps.pkg.outputs.checksum }}" \
+            --arg timestamp "${{ steps.pkg.outputs.timestamp }}" \
+            '[{
+               guid: $guid, name: $name, description: $description, overview: $overview,
+               owner: $owner, category: $category, imageUrl: (if $image == "" then null else $image end),
+               versions: [{
+                 version: $version, changelog: $changelog, targetAbi: $abi,
+                 sourceUrl: $sourceUrl, checksum: $checksum, timestamp: $timestamp
+               }]
+             }]' > public/manifest.json
+          cat public/manifest.json
+
+      - name: Publish rolling porcupine prerelease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ env.RELEASE_TAG }}"
+          # rolling prerelease: recreate each run, kept out of /releases/latest so master's 10.11 line is unaffected
+          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$TAG" \
+            "public/${{ steps.pkg.outputs.zip }}" \
+            "public/manifest.json" \
+            --prerelease \
+            --title "Porcupine build (Jellyfin 10.12 / net10)" \
+            --notes "Plugin build for the porcupine Jellyfin fork. Add the repository to your porcupine Jellyfin: ${{ github.server_url }}/${{ github.repository }}/releases/download/${{ env.RELEASE_TAG }}/manifest.json"
+
+      - name: Summary
+        run: |
+          {
+            echo "### Porcupine plugin repository published :hedgehog:"
+            echo ""
+            echo "Add this URL in your porcupine Jellyfin (Dashboard → Plugins → Repositories):"
+            echo ""
+            echo '```'
+            echo "${{ github.server_url }}/${{ github.repository }}/releases/download/${{ env.RELEASE_TAG }}/manifest.json"
+            echo '```'
+            echo ""
+            echo "- Plugin version: \`${{ steps.meta.outputs.version }}\`  (targetAbi \`${{ steps.meta.outputs.abi }}\`, \`${{ steps.meta.outputs.framework }}\`)"
+            echo "- Built against \`${{ env.PORCUPINE_REPO }}@${{ env.PORCUPINE_REF }}\` Jellyfin.* \`${{ env.JELLYFIN_PKG_VERSION }}\`"
+            echo "- Package: \`${{ steps.pkg.outputs.zip }}\`  (md5 \`${{ steps.pkg.outputs.checksum }}\`)"
+          } >> "$GITHUB_STEP_SUMMARY"

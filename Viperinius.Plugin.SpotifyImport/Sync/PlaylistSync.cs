@@ -208,7 +208,8 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
                 progress.Report(progressValue);
             }
 
-            await _playlistManager.AddItemToPlaylistAsync(playlist.Id, newTracks, user.Id).ConfigureAwait(false);
+            // porcupine (10.12) added an optional 0-based insert position; null appends to the end
+            await _playlistManager.AddItemToPlaylistAsync(playlist.Id, newTracks, null, user.Id).ConfigureAwait(false);
             await UpdatePlaylistCompletenessDesc(playlist, providerPlaylistInfo, missingTracks.Count, providerPlaylistInfo.Tracks.Count, cancellationToken).ConfigureAwait(false);
 
             if ((Plugin.Instance?.Configuration.GenerateMissingTrackLists ?? false) && missingTracks.Count > 0)
