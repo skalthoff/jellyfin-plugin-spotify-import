@@ -118,7 +118,7 @@ jobs:
       - name: Build repository manifest
         run: |
           set -euo pipefail
-          CHANGELOG="Performance build: SQLite indexes on hot-path lookups, batched write transactions, WAL/synchronous=NORMAL, and memoized per-artist/per-album library queries during sync. Matching behavior unchanged."
+          CHANGELOG="Reliability + performance build based on upstream 1.17.3.0. Reliability: length-normalised fuzzy matching for longer titles, Spotify track-duration tie-break (with optional hard length limit), and a new featuring/remaster/part-aware match level. Performance: best-match early-exit and memoized album/parens lookups, plus the prior SQLite indexing, batched write transactions and WAL work."
           jq -n \
             --arg guid "${{ steps.meta.outputs.guid }}" \
             --arg name "${{ steps.meta.outputs.name }}" \
@@ -154,8 +154,8 @@ jobs:
           gh release create "$TAG" \
             "public/${{ steps.pkg.outputs.zip }}" \
             "public/manifest.json" \
-            --title "$TAG (custom performance build)" \
-            --notes "Unofficial performance build of the Spotify Import plugin. Add the repository to Jellyfin: ${{ github.server_url }}/${{ github.repository }}/releases/latest/download/manifest.json"
+            --title "$TAG (custom build)" \
+            --notes "Unofficial reliability + performance build of the Spotify Import plugin, based on upstream 1.17.3.0. Add the repository to Jellyfin: ${{ github.server_url }}/${{ github.repository }}/releases/latest/download/manifest.json"
 
       - name: Summary
         run: |

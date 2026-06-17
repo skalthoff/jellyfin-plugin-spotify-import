@@ -2,8 +2,8 @@
 name: "Spotify Import"
 guid: "F03D0ADB-289F-4986-BD6F-2468025249B3"
 imageUrl: "https://github.com/Viperinius/jellyfin-plugin-spotify-import/raw/master/viperinius-plugin-spotifyimport.png"
-version: "1.16.0.1"
-targetAbi: "10.11.0.0"
+version: "1.17.3.1"
+targetAbi: "10.11.10.0"
 framework: "net9.0"
 overview: "This plugin imports playlists from Spotify."
 description: >
@@ -28,6 +28,44 @@ artifacts:
 #- "MetaBrainz.MusicBrainz.dll"  #
 changelog: |2-
   # Changelog
+
+  ## [1.17.3.1] - 2026-06-17
+
+  ### Added
+
+  - Reliability: length-normalised fuzzy similarity ratio for longer titles (tolerance now scales with title length instead of a fixed character budget)
+  - Reliability: Spotify track duration is used as a tie-breaker between otherwise-equal matches, with an optional hard length limit (off by default)
+  - Reliability: new match level "Ignore Featuring / Remaster / Part Tags" that strips featuring credits and remaster tags and canonicalises Pt./Part (Remix/Live/Acoustic are intentionally kept distinct)
+
+  ### Changed
+
+  - Performance: stop scanning once the best possible match is found, memoize album track lists and parentheses splits, and reuse matcher instances during sync (matching behavior unchanged)
+  - Includes the SQLite indexing, batched write transactions, WAL/synchronous=NORMAL and per-artist/per-album query memoization from 1.16.0.1
+  - Rebased onto upstream 1.17.3.0 (Spotify API rework, Jellyfin 10.11.10 SDK)
+
+  ## [1.17.3.0] - 2026-06-08
+
+  ### Fixed
+
+  - Fix skipped import run if only Spotify-owned playlists are configured (see #86)
+
+  ## [1.17.2.0] - 2026-06-02
+
+  ### Changed
+
+  - use item field of a playlist track if the track field is not set (API parsing)
+
+  ## [1.17.1.0] - 2026-05-27
+
+  ### Fixed
+
+  - Update Jellyfin SDK to work with version 10.11.10
+
+  ## [1.17.0.0] - 2026-02-24
+
+  ### Changed
+
+  - Rework API interactions to work with the latest Spotify API changes (see #79)
 
   ## [1.16.0.1] - 2026-06-16
 
