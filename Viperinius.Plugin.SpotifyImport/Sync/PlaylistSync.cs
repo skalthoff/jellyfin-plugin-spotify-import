@@ -212,8 +212,18 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
 
                     if (track != null)
                     {
-                        newTracks.Add(track.Id);
-                        stats.NewlyAdded++;
+                        // a finder can resolve to an item already in the playlist (or one another track in this
+                        // run just added). existingTrackIds.Add returns false in that case, so we avoid re-adding
+                        // it and attribute it to AlreadyInPlaylist rather than over-reporting NewlyAdded.
+                        if (existingTrackIds.Add(track.Id))
+                        {
+                            newTracks.Add(track.Id);
+                            stats.NewlyAdded++;
+                        }
+                        else
+                        {
+                            stats.AlreadyInPlaylist++;
+                        }
                     }
                     else
                     {
@@ -412,33 +422,8 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
         private static bool ItemMatchesTrackInfo(Audio audioItem, ProviderTrackInfo trackInfo, out ItemMatchCriteria failedCriterium)
         {
             var level = Plugin.Instance?.Configuration.ItemMatchLevel ?? ItemMatchLevel.Default;
-            failedCriterium = ItemMatchCriteria.None;
-
-            if ((Plugin.Instance?.Configuration.ItemMatchCriteria.HasFlag(ItemMatchCriteria.Artists) ?? false) && !TrackComparison.ArtistOneContained(audioItem, trackInfo, level))
-            {
-                failedCriterium = ItemMatchCriteria.Artists;
-                return false;
-            }
-
-            if ((Plugin.Instance?.Configuration.ItemMatchCriteria.HasFlag(ItemMatchCriteria.AlbumName) ?? false) && !TrackComparison.AlbumNameEqual(audioItem, trackInfo, level).ComparisonResult)
-            {
-                failedCriterium = ItemMatchCriteria.AlbumName;
-                return false;
-            }
-
-            if ((Plugin.Instance?.Configuration.ItemMatchCriteria.HasFlag(ItemMatchCriteria.AlbumArtists) ?? false) && !TrackComparison.AlbumArtistOneContained(audioItem, trackInfo, level))
-            {
-                failedCriterium = ItemMatchCriteria.AlbumArtists;
-                return false;
-            }
-
-            if ((Plugin.Instance?.Configuration.ItemMatchCriteria.HasFlag(ItemMatchCriteria.TrackName) ?? false) && !TrackComparison.TrackNameEqual(audioItem, trackInfo, level).ComparisonResult)
-            {
-                failedCriterium = ItemMatchCriteria.TrackName;
-                return false;
-            }
-
-            return true;
+            var criteria = Plugin.Instance?.Configuration.ItemMatchCriteria ?? ItemMatchCriteria.None;
+            return TrackCriteriaMatcher.Matches(audioItem, trackInfo, level, criteria, out failedCriterium);
         }
 
         private async Task<Playlist?> GetOrCreatePlaylistByName(string name, User user, bool shouldBePrivate, bool deleteExistingPlaylist)

@@ -845,8 +845,8 @@ namespace Viperinius.Plugin.SpotifyImport.Tests
 
             const string providerName = "Spotify";
             var resolvedGuid = Guid.NewGuid();
-            var trackA = new ProviderTrackInfo { Id = "a", Name = "Song", IsrcId = "ISRCX" };
-            var trackB = new ProviderTrackInfo { Id = "b", Name = "Song", IsrcId = "ISRCX" };
+            var trackA = new ProviderTrackInfo { Id = "a", Name = "Song", AlbumName = "Album", ArtistNames = new List<string> { "Artist" }, AlbumArtistNames = new List<string> { "Artist" }, IsrcId = "ISRCX" };
+            var trackB = new ProviderTrackInfo { Id = "b", Name = "Song", AlbumName = "Album", ArtistNames = new List<string> { "Artist" }, AlbumArtistNames = new List<string> { "Artist" }, IsrcId = "ISRCX" };
 
             var loggerMock = Substitute.For<ILogger<PlaylistSync>>();
             var plManagerMock = Substitute.For<MediaBrowser.Controller.Playlists.IPlaylistManager>();
@@ -855,7 +855,7 @@ namespace Viperinius.Plugin.SpotifyImport.Tests
             SetUpLibManagerMock(libManagerMock, (MediaBrowser.Controller.Entities.BaseItem?)null);
             libManagerMock
                 .GetItemById<Audio>(Arg.Any<Guid>())
-                .Returns(info => new Audio { Id = info.ArgAt<Guid>(0), Name = "Song" });
+                .Returns(info => new Audio { Id = info.ArgAt<Guid>(0), Name = "Song", Album = "Album", Artists = new[] { "Artist" }, AlbumArtists = new[] { "Artist" } });
 
             using var db = new DbRepository(":memory:");
             db.InitDb();
