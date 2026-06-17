@@ -17,6 +17,11 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
         private readonly ILogger _logger;
         private readonly ILibraryManager _libraryManager;
 
+        // per-sync memoisation: GetArtist/GetAlbum used to re-issue the same library query once per candidate row.
+        // StringMatchFinder is constructed once per sync run, so these caches are naturally scoped to a single sync.
+        private readonly Dictionary<string, IReadOnlyList<MediaBrowser.Controller.Entities.BaseItem>> _artistCandidatesCache = new(StringComparer.Ordinal);
+        private readonly Dictionary<Guid, IReadOnlyList<MediaBrowser.Controller.Entities.BaseItem>> _artistAlbumsCache = new();
+
         public StringMatchFinder(
             ILogger logger,
             ILibraryManager libraryManager)
@@ -130,17 +135,15 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
             }
 
             // only search for the first few characters to increase the chances of finding artists with slightly differing names between provider and jellyfin
-            var queryResult = _libraryManager.GetArtists(new MediaBrowser.Controller.Entities.InternalItemsQuery
-            {
-                SearchTerm = artistName[0..Math.Min(artistName.Length, MaxSearchChars)],
-            });
+            // (memoised per truncated search term so walking K candidates does not re-run the same query K+1 times)
+            var candidates = GetArtistCandidates(artistName);
 
-            if (queryResult.Items.Count == nextJfArtistIndex || queryResult.Items.Count == 0)
+            if (candidates.Count == nextJfArtistIndex || candidates.Count == 0)
             {
                 if (Plugin.Instance?.Configuration.EnableVerboseLogging ?? false)
                 {
                     _logger.LogInformation("> Reached end of jellyfin artist list");
-                    if (queryResult.Items.Count == 0)
+                    if (candidates.Count == 0)
                     {
                         _logger.LogInformation("> Did not find any artists for the name {Name}", artistName);
                     }
@@ -151,7 +154,7 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
                 return null;
             }
 
-            var (item, _) = queryResult.Items.ElementAt(nextJfArtistIndex);
+            var item = candidates[nextJfArtistIndex];
             nextJfArtistIndex++;
 
             if (item is not MusicArtist artist)
@@ -180,6 +183,45 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
             return artist;
         }
 
+        private IReadOnlyList<MediaBrowser.Controller.Entities.BaseItem> GetArtistCandidates(string artistName)
+        {
+            var searchTerm = artistName[0..Math.Min(artistName.Length, MaxSearchChars)];
+            if (!_artistCandidatesCache.TryGetValue(searchTerm, out var candidates))
+            {
+                var queryResult = _libraryManager.GetArtists(new MediaBrowser.Controller.Entities.InternalItemsQuery
+                {
+                    SearchTerm = searchTerm,
+                });
+                candidates = queryResult.Items.Select(i => i.Item).ToList();
+                _artistCandidatesCache[searchTerm] = candidates;
+            }
+
+            return candidates;
+        }
+
+        private IReadOnlyList<MediaBrowser.Controller.Entities.BaseItem> GetArtistAlbums(MusicArtist artist)
+        {
+            if (_artistAlbumsCache.TryGetValue(artist.Id, out var albums))
+            {
+                return albums;
+            }
+
+            // materialise once; Folder.Children is db-backed and re-resolves on every access
+            IReadOnlyList<MediaBrowser.Controller.Entities.BaseItem> resolved = artist.Children.ToList();
+            if (resolved.Count == 0)
+            {
+                // for whatever reason albums are apparently not always set as children of the artist... so try to find them using album artist
+                resolved = _libraryManager.GetItemList(new MediaBrowser.Controller.Entities.InternalItemsQuery
+                {
+                    AlbumArtistIds = new[] { artist.Id },
+                    IncludeItemTypes = new[] { BaseItemKind.MusicAlbum }
+                }) ?? new List<MediaBrowser.Controller.Entities.BaseItem>();
+            }
+
+            _artistAlbumsCache[artist.Id] = resolved;
+            return resolved;
+        }
+
         private bool CheckAlbumArtist(MusicAlbum album, ProviderTrackInfo providerTrackInfo)
         {
             if (Plugin.Instance?.Configuration.ItemMatchCriteria.HasFlag(ItemMatchCriteria.AlbumArtists) ?? false)
@@ -193,17 +235,8 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
 
         private MusicAlbum? GetAlbum(MusicArtist artist, ProviderTrackInfo providerTrackInfo, ref int nextAlbumIndex)
         {
-            var albums = artist.Children;
-            if (!albums.Any())
-            {
-                // for whatever reason albums are apparently not always set as children of the artist... so try to find them using album artist
-                albums = _libraryManager.GetItemList(new MediaBrowser.Controller.Entities.InternalItemsQuery
-                {
-                    AlbumArtistIds = new[] { artist.Id },
-                    IncludeItemTypes = new[] { BaseItemKind.MusicAlbum }
-                });
-                albums ??= new List<MediaBrowser.Controller.Entities.BaseItem>();
-            }
+            // memoised per artist: the album list (incl. the by-name-artist fallback query) was previously re-resolved on every album index
+            var albums = GetArtistAlbums(artist);
 
             var item = albums.ElementAtOrDefault(nextAlbumIndex);
             nextAlbumIndex++;
@@ -211,7 +244,7 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
             {
                 if (Plugin.Instance?.Configuration.EnableVerboseLogging ?? false)
                 {
-                    _logger.LogInformation(">> Reached end of album list (has {Count} entries)", albums.Count());
+                    _logger.LogInformation(">> Reached end of album list (has {Count} entries)", albums.Count);
                 }
 
                 nextAlbumIndex = -1;

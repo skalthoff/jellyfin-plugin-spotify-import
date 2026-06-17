@@ -160,6 +160,13 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
             var newTracks = new List<Guid>();
             var missingTracks = new List<ProviderTrackInfo>();
 
+            // materialise the playlist's existing audio ids once instead of re-enumerating playlist.GetChildren()
+            // for every provider track (which was O(providerTracks * playlistSize) and re-built the children each call)
+            var existingTrackIds = playlist.GetChildren(user, false, null)
+                                           .OfType<Audio>()
+                                           .Select(i => i.Id)
+                                           .ToHashSet();
+
             var providerTrackProgressIndex = 0;
             var progressValue = progressRange.Item1;
             foreach (var providerTrack in providerPlaylistInfo.Tracks)
@@ -171,9 +178,12 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
                     continue;
                 }
 
-                if (!await CheckPlaylistForTrack(playlist, user, providerPlaylistInfo.ProviderName, providerTrack).ConfigureAwait(false))
+                // resolve the cached match once: reuse it both to skip tracks already in the playlist and as the
+                // first step of the match pipeline, so the cache db lookup runs at most once per track
+                var cachedMatch = await _cacheFinder.FindTrackAsync(providerPlaylistInfo.ProviderName, providerTrack).ConfigureAwait(false);
+                if (cachedMatch == null || !existingTrackIds.Contains(cachedMatch.Id))
                 {
-                    var (track, failedCriterium) = await GetMatchingTrackAsync(providerPlaylistInfo.ProviderName, providerTrack).ConfigureAwait(false);
+                    var (track, failedCriterium) = await GetMatchingTrackAsync(providerPlaylistInfo.ProviderName, providerTrack, cachedMatch, cacheResolved: true).ConfigureAwait(false);
                     if (failedCriterium != ItemMatchCriteria.None && (Plugin.Instance?.Configuration.EnableVerboseLogging ?? false))
                     {
                         _logger.LogInformation(
@@ -214,7 +224,7 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
             }
         }
 
-        protected async Task<(Audio? Track, ItemMatchCriteria FailedCriteria)> GetMatchingTrackAsync(string providerId, ProviderTrackInfo providerTrackInfo)
+        protected async Task<(Audio? Track, ItemMatchCriteria FailedCriteria)> GetMatchingTrackAsync(string providerId, ProviderTrackInfo providerTrackInfo, Audio? cachedMatch = null, bool cacheResolved = false)
         {
             var failedMatchCriterium = ItemMatchCriteria.None;
             if (Plugin.Instance?.Configuration.EnableVerboseLogging ?? false)
@@ -228,8 +238,8 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
                     providerTrackInfo.Id);
             }
 
-            // 1. check cache
-            var match = await _cacheFinder.FindTrackAsync(providerId, providerTrackInfo).ConfigureAwait(false);
+            // 1. check cache (the caller may have already resolved it to avoid a duplicate db lookup)
+            var match = cacheResolved ? cachedMatch : await _cacheFinder.FindTrackAsync(providerId, providerTrackInfo).ConfigureAwait(false);
             if (match != null)
             {
                 if (Plugin.Instance?.Configuration.EnableVerboseLogging ?? false)
@@ -333,25 +343,6 @@ namespace Viperinius.Plugin.SpotifyImport.Sync
             }
 
             return null;
-        }
-
-        private async Task<bool> CheckPlaylistForTrack(Playlist playlist, User user, string providerId, ProviderTrackInfo providerTrackInfo)
-        {
-            var match = await _cacheFinder.FindTrackAsync(providerId, providerTrackInfo).ConfigureAwait(false);
-            foreach (var item in playlist.GetChildren(user, false, null))
-            {
-                if (item is not Audio audioItem)
-                {
-                    continue;
-                }
-
-                if (match?.Id == audioItem.Id)
-                {
-                    return true;
-                }
-            }
-
-            return false;
         }
 
         private static bool ItemMatchesTrackInfo(Audio audioItem, ProviderTrackInfo trackInfo, out ItemMatchCriteria failedCriterium)

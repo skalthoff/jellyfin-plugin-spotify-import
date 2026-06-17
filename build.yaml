@@ -2,7 +2,7 @@
 name: "Spotify Import"
 guid: "F03D0ADB-289F-4986-BD6F-2468025249B3"
 imageUrl: "https://github.com/Viperinius/jellyfin-plugin-spotify-import/raw/master/viperinius-plugin-spotifyimport.png"
-version: "1.16.0.0"
+version: "1.16.0.1"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 overview: "This plugin imports playlists from Spotify."
@@ -28,6 +28,12 @@ artifacts:
 #- "MetaBrainz.MusicBrainz.dll"  #
 changelog: |2-
   # Changelog
+
+  ## [1.16.0.1] - 2026-06-16
+
+  ### Changed
+
+  - Performance: add SQLite indexes on all hot-path lookups, batch playlist writes into transactions, enable WAL/synchronous=NORMAL, and memoize per-artist/per-album library queries during sync (matching behavior unchanged)
 
   ## [1.16.0.0] - 2025-10-21
 

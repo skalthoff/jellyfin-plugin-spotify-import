@@ -1,0 +1,173 @@
+name: '📦 Publish Plugin Repository'
+
+# Builds the plugin, packages it, and publishes a Jellyfin-compatible plugin
+# repository via GitHub Releases. Add this URL in Jellyfin
+# (Dashboard -> Plugins -> Repositories):
+#
+#   https://github.com/<owner>/<repo>/releases/latest/download/manifest.json
+#
+# The manifest always points at the newest published release, so installs and
+# updates flow through the Jellyfin catalog like any other repo.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    paths:
+      - 'build.yaml'
+      - 'Viperinius.Plugin.SpotifyImport/**'
+      - '.github/workflows/publish-repo.yaml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-plugin-repo
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Read plugin metadata
+        id: meta
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet pyyaml
+          # parse build.yaml deterministically (avoids yq variant/flag differences across environments);
+          # scalar fields go to $GITHUB_OUTPUT, the artifacts list goes to artifacts.txt
+          python3 - <<'PY'
+          import os, yaml
+          d = yaml.safe_load(open('build.yaml'))
+          fields = {
+              'name': d['name'], 'guid': d['guid'], 'version': str(d['version']),
+              'abi': d['targetAbi'], 'framework': d['framework'], 'owner': d.get('owner', ''),
+              'category': d.get('category', ''), 'overview': d.get('overview', ''),
+              'description': d.get('description', ''), 'image': d.get('imageUrl', '') or '',
+          }
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              for k, v in fields.items():
+                  out.write(f"{k}={str(v).strip()}\n")
+          with open('artifacts.txt', 'w') as a:
+              for art in d.get('artifacts', []):
+                  a.write(f"{art}\n")
+          PY
+
+      - name: Build plugin (Release)
+        run: |
+          dotnet build Viperinius.Plugin.SpotifyImport/Viperinius.Plugin.SpotifyImport.csproj \
+            -c Release -f "${{ steps.meta.outputs.framework }}" --nologo
+
+      - name: Assemble package
+        id: pkg
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.meta.outputs.version }}"
+          OUT="Viperinius.Plugin.SpotifyImport/bin/Release/${{ steps.meta.outputs.framework }}"
+          STAGE="stage"
+          ZIP="spotify_import_${VERSION}.zip"
+
+          rm -rf "$STAGE" public
+          mkdir -p "$STAGE" public
+
+          # copy exactly the artifacts declared in build.yaml (the rest are provided by Jellyfin)
+          while IFS= read -r artifact; do
+            [ -z "$artifact" ] && continue
+            cp "$OUT/$artifact" "$STAGE/"
+            echo "staged $artifact"
+          done < artifacts.txt
+
+          # meta.json mirrors the manifest version entry (parity with catalog-installed plugins)
+          jq -n \
+            --arg guid "${{ steps.meta.outputs.guid }}" \
+            --arg name "${{ steps.meta.outputs.name }}" \
+            --arg overview "${{ steps.meta.outputs.overview }}" \
+            --arg description "${{ steps.meta.outputs.description }}" \
+            --arg owner "${{ steps.meta.outputs.owner }}" \
+            --arg category "${{ steps.meta.outputs.category }}" \
+            --arg version "$VERSION" \
+            --arg abi "${{ steps.meta.outputs.abi }}" \
+            --arg framework "${{ steps.meta.outputs.framework }}" \
+            '{category: $category, guid: $guid, name: $name, overview: $overview,
+              description: $description, owner: $owner, targetAbi: $abi,
+              framework: $framework, version: $version, status: "Active", autoUpdate: false}' \
+            > "$STAGE/meta.json"
+
+          ( cd "$STAGE" && zip -qr "../public/$ZIP" . )
+
+          CHECKSUM="$(md5sum "public/$ZIP" | cut -d' ' -f1)"
+          TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          SOURCE_URL="${{ github.server_url }}/${{ github.repository }}/releases/download/v${VERSION}/${ZIP}"
+
+          {
+            echo "zip=$ZIP"
+            echo "checksum=$CHECKSUM"
+            echo "timestamp=$TIMESTAMP"
+            echo "source_url=$SOURCE_URL"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build repository manifest
+        run: |
+          set -euo pipefail
+          CHANGELOG="Performance build: SQLite indexes on hot-path lookups, batched write transactions, WAL/synchronous=NORMAL, and memoized per-artist/per-album library queries during sync. Matching behavior unchanged."
+          jq -n \
+            --arg guid "${{ steps.meta.outputs.guid }}" \
+            --arg name "${{ steps.meta.outputs.name }}" \
+            --arg description "${{ steps.meta.outputs.description }}" \
+            --arg overview "${{ steps.meta.outputs.overview }}" \
+            --arg owner "${{ steps.meta.outputs.owner }}" \
+            --arg category "${{ steps.meta.outputs.category }}" \
+            --arg image "${{ steps.meta.outputs.image }}" \
+            --arg version "${{ steps.meta.outputs.version }}" \
+            --arg abi "${{ steps.meta.outputs.abi }}" \
+            --arg changelog "$CHANGELOG" \
+            --arg sourceUrl "${{ steps.pkg.outputs.source_url }}" \
+            --arg checksum "${{ steps.pkg.outputs.checksum }}" \
+            --arg timestamp "${{ steps.pkg.outputs.timestamp }}" \
+            '[{
+               guid: $guid, name: $name, description: $description, overview: $overview,
+               owner: $owner, category: $category, imageUrl: (if $image == "" then null else $image end),
+               versions: [{
+                 version: $version, changelog: $changelog, targetAbi: $abi,
+                 sourceUrl: $sourceUrl, checksum: $checksum, timestamp: $timestamp
+               }]
+             }]' > public/manifest.json
+          cat public/manifest.json
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="v${{ steps.meta.outputs.version }}"
+          # recreate the release so re-runs of the same version stay idempotent
+          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$TAG" \
+            "public/${{ steps.pkg.outputs.zip }}" \
+            "public/manifest.json" \
+            --title "$TAG (custom performance build)" \
+            --notes "Unofficial performance build of the Spotify Import plugin. Add the repository to Jellyfin: ${{ github.server_url }}/${{ github.repository }}/releases/latest/download/manifest.json"
+
+      - name: Summary
+        run: |
+          {
+            echo "### Plugin repository published :rocket:"
+            echo ""
+            echo "Add this URL in Jellyfin (Dashboard → Plugins → Repositories):"
+            echo ""
+            echo '```'
+            echo "${{ github.server_url }}/${{ github.repository }}/releases/latest/download/manifest.json"
+            echo '```'
+            echo ""
+            echo "- Version: \`${{ steps.meta.outputs.version }}\`  (targetAbi \`${{ steps.meta.outputs.abi }}\`)"
+            echo "- Package: \`${{ steps.pkg.outputs.zip }}\`  (md5 \`${{ steps.pkg.outputs.checksum }}\`)"
+          } >> "$GITHUB_STEP_SUMMARY"
