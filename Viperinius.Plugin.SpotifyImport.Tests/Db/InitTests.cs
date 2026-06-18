@@ -41,6 +41,48 @@ namespace Viperinius.Plugin.SpotifyImport.Tests.Db
         }
 
         [Fact]
+        public void SelfHealsMissingIsrcIdColumnOnUpgrade()
+        {
+            using var db = DbRepositoryWrapper.GetInstance();
+
+            // simulate a database created by a pre-ISRC plugin version: ProviderTracks without IsrcId
+            using (var create = db.WrappedConnection.CreateCommand())
+            {
+                create.CommandText = "CREATE TABLE ProviderTracks (Id INTEGER PRIMARY KEY, ProviderId TEXT, TrackId TEXT, Name TEXT, AlbumName TEXT, AlbumArtistNames TEXT, ArtistNames TEXT, Number INTEGER)";
+                create.ExecuteNonQuery();
+            }
+
+            Assert.False(HasColumn(db, "ProviderTracks", "IsrcId"));
+
+            // InitDb must add the missing column (CREATE TABLE IF NOT EXISTS will not) before it creates
+            // the IsrcId index, which would otherwise fail with "no such column: IsrcId"
+            db.InitDb();
+
+            Assert.True(HasColumn(db, "ProviderTracks", "IsrcId"));
+
+            // the healed column is usable end to end
+            using (var insert = db.WrappedConnection.CreateCommand())
+            {
+                insert.CommandText = "INSERT INTO ProviderTracks (ProviderId, TrackId, Name, IsrcId) VALUES ('Spotify', 'abc', 'Song', 'USABC1234567')";
+                insert.ExecuteNonQuery();
+            }
+
+            using (var read = db.WrappedConnection.CreateCommand())
+            {
+                read.CommandText = "SELECT IsrcId FROM ProviderTracks WHERE TrackId = 'abc'";
+                Assert.Equal("USABC1234567", (string?)read.ExecuteScalar());
+            }
+        }
+
+        private static bool HasColumn(DbRepositoryWrapper db, string table, string column)
+        {
+            using var cmd = db.WrappedConnection.CreateCommand();
+            cmd.CommandText = $"SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = $name";
+            cmd.Parameters.AddWithValue("$name", column);
+            return ((long?)cmd.ExecuteScalar() ?? 0) > 0;
+        }
+
+        [Fact]
         public void SetupTables()
         {
             using var db = DbRepositoryWrapper.GetInstance();

@@ -2,7 +2,7 @@
 name: "Spotify Import"
 guid: "F03D0ADB-289F-4986-BD6F-2468025249B3"
 imageUrl: "https://github.com/Viperinius/jellyfin-plugin-spotify-import/raw/master/viperinius-plugin-spotifyimport.png"
-version: "1.18.0.0"
+version: "1.18.0.1"
 targetAbi: "10.12.0.0"
 framework: "net10.0"
 overview: "This plugin imports playlists from Spotify."
@@ -28,6 +28,12 @@ artifacts:
 #- "MetaBrainz.MusicBrainz.dll"  #
 changelog: |2-
   # Changelog
+
+  ## [1.18.0.1] - 2026-06-17
+
+  ### Fixed
+
+  - Self-heal the ProviderTracks.IsrcId column when upgrading a database created before ISRC support was added, so imports no longer fail on the IsrcId index
 
   ## [1.18.0.0] - 2026-06-17
 

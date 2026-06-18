@@ -150,15 +150,31 @@ namespace Viperinius.Plugin.SpotifyImport.Utils
 
             // create tables
 
-            using var cmd = Connection.CreateCommand();
+            using (var cmd = Connection.CreateCommand())
+            {
 #pragma warning disable CA2100 // Review SQL queries for security vulnerabilities --> only pre-defined query strings
-            cmd.CommandText = string.Join(';', _createTableQueries) + ';' + string.Join(';', _createIndexQueries);
+                cmd.CommandText = string.Join(';', _createTableQueries);
 #pragma warning restore CA2100 // Review SQL queries for security vulnerabilities
-            cmd.ExecuteNonQuery();
+                cmd.ExecuteNonQuery();
+            }
 
-            // update table columns if needed
+            // self-heal columns added in later plugin versions. CREATE TABLE IF NOT EXISTS above does
+            // not alter a table that an older database already created, so add any missing columns here
+            // BEFORE creating the indexes below (the IsrcId index would otherwise fail with
+            // "no such column: IsrcId" on a database created before ISRC support). AddTableColumn is a
+            // no-op when the column is already present.
 
-            /*AddTableColumn(TableProviderTracksName, "Name", "TEXT");*/
+            AddTableColumn(TableProviderTracksName, "IsrcId", "TEXT");
+
+            // create indexes
+
+            using (var cmd = Connection.CreateCommand())
+            {
+#pragma warning disable CA2100 // Review SQL queries for security vulnerabilities --> only pre-defined query strings
+                cmd.CommandText = string.Join(';', _createIndexQueries);
+#pragma warning restore CA2100 // Review SQL queries for security vulnerabilities
+                cmd.ExecuteNonQuery();
+            }
 
             tx.Commit();
         }
@@ -717,7 +733,6 @@ namespace Viperinius.Plugin.SpotifyImport.Utils
             return count > 0;
         }
 
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("CodeQuality", "IDE0051:Remove unused private members", Justification = "for future reference")]
         private bool AddTableColumn(string table, string column, string type)
         {
             if (!_tableNames.Contains(table))
